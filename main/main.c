@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "driver/i2c_master.h"
+#include "ds18b20.h"
 #include "esp_err.h"
 #include "esp_lcd_panel_io.h"
 #include "esp_lcd_panel_ops.h"
@@ -18,10 +19,13 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "lvgl.h"
+#include "onewire_bus.h"
 
 #include "esp_lcd_panel_vendor.h"
 
 static const char *TAG = "thermostatic";
+
+#define DS18B20_GPIO_NUM GPIO_NUM_0
 
 #define I2C_BUS_PORT 0
 
@@ -56,7 +60,8 @@ static uint8_t oled_buffer[SSD1306_LCD_H_RES * SSD1306_LCD_V_RES / 8];
 // LVGL library is not thread-safe, use a mutex to protect it
 static _lock_t lvgl_api_lock;
 
-extern void lvgl_update_ui(lv_disp_t *disp, uint16_t rt);
+extern void lvgl_create_ui(lv_disp_t *disp);
+extern void lvgl_set_temperature(float temperature);
 
 static bool notify_lvgl_flush_ready(esp_lcd_panel_io_handle_t io_panel, esp_lcd_panel_io_event_data_t *edata,
                                     void *user_ctx)
@@ -125,6 +130,44 @@ static void lvgl_port_task(void *arg)
         // in case of lvgl display not ready yet
         time_till_next_ms = MIN(time_till_next_ms, SSD1306_LVGL_TASK_MAX_DELAY_MS);
         usleep(1000 * time_till_next_ms);
+    }
+}
+
+static void temperature_task(void *arg)
+{
+    ds18b20_device_handle_t s_ds18b20 = NULL;
+
+    ESP_LOGI(TAG, "Initialize DS18B20 on GPIO%d", DS18B20_GPIO_NUM);
+    onewire_bus_handle_t onewire_bus = NULL;
+    onewire_bus_config_t onewire_bus_config = {
+        .bus_gpio_num = DS18B20_GPIO_NUM,
+    };
+    onewire_bus_rmt_config_t onewire_rmt_config = {
+        .max_rx_bytes = 10,
+    };
+    ESP_ERROR_CHECK(onewire_new_bus_rmt(&onewire_bus_config, &onewire_rmt_config, &onewire_bus));
+
+    ds18b20_config_t ds_cfg = {};
+    if (ds18b20_new_device_from_bus(onewire_bus, &ds_cfg, &s_ds18b20) == ESP_OK) {
+        ESP_LOGI(TAG, "DS18B20 found on GPIO%d", DS18B20_GPIO_NUM);
+    } else {
+        ESP_LOGW(TAG, "No DS18B20 device found on GPIO%d", DS18B20_GPIO_NUM);
+    }
+
+    while (1) {
+        if (s_ds18b20 != NULL) {
+            float temperature = 0.0f;
+            if (ds18b20_trigger_temperature_conversion(s_ds18b20) == ESP_OK &&
+                ds18b20_get_temperature(s_ds18b20, &temperature) == ESP_OK) {
+                ESP_LOGI(TAG, "Temperature: %.1f C", temperature);
+                _lock_acquire(&lvgl_api_lock);
+                lvgl_set_temperature(temperature);
+                _lock_release(&lvgl_api_lock);
+            } else {
+                ESP_LOGW(TAG, "Failed to read DS18B20 temperature");
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
     }
 }
 
@@ -213,6 +256,8 @@ void app_main(void)
     ESP_LOGI(TAG, "Display LVGL Scroll Text");
     // Lock the mutex due to the LVGL APIs are not thread-safe
     _lock_acquire(&lvgl_api_lock);
-    lvgl_update_ui(display, 305);
+    lvgl_create_ui(display);
     _lock_release(&lvgl_api_lock);
+
+    xTaskCreate(temperature_task, "ds18b20", 4096, NULL, 5, NULL);
 }

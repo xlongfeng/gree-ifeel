@@ -8,17 +8,26 @@
 
 #include "lvgl.h"
 
-void lvgl_update_ui(lv_display_t *disp, uint16_t rt)
+static lv_obj_t *s_temp_label = NULL;
+
+void lvgl_create_ui(lv_display_t *disp)
 {
     lv_obj_t *scr = lv_display_get_screen_active(disp);
-    lv_obj_t *label = lv_label_create(scr);
-    char text[64];
-
-    sprintf(text, "RT: %d.%d °C", rt / 10, rt % 10);
-    lv_label_set_long_mode(label, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
-    lv_label_set_text(label, text);
+    s_temp_label = lv_label_create(scr);
+    lv_label_set_long_mode(s_temp_label, LV_LABEL_LONG_SCROLL_CIRCULAR); /* Circular scroll */
+    lv_label_set_text(s_temp_label, "Thermostatic Control");
     /* Size of the screen (if you use rotation 90 or 270, please use
      * lv_display_get_vertical_resolution) */
-    lv_obj_set_width(label, lv_display_get_horizontal_resolution(disp));
-    lv_obj_align(label, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_width(s_temp_label, lv_display_get_horizontal_resolution(disp));
+    lv_obj_align(s_temp_label, LV_ALIGN_TOP_MID, 0, 0);
+}
+
+void lvgl_set_temperature(float temperature)
+{
+    if (s_temp_label == NULL) {
+        return;
+    }
+    char text[64];
+    sprintf(text, "RT: %.1f C", temperature);
+    lv_label_set_text(s_temp_label, text);
 }
