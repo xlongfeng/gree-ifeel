@@ -18,6 +18,7 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "gree_ir.h"
 #include "lvgl.h"
 #include "onewire_bus.h"
 
@@ -26,6 +27,7 @@
 static const char *TAG = "thermostatic";
 
 #define DS18B20_GPIO_NUM GPIO_NUM_0
+#define GREE_IR_GPIO_NUM GPIO_NUM_4
 
 #define I2C_BUS_PORT 0
 
@@ -260,4 +262,6 @@ void app_main(void)
     _lock_release(&lvgl_api_lock);
 
     xTaskCreate(temperature_task, "ds18b20", 4096, NULL, 5, NULL);
+
+    ESP_ERROR_CHECK(gree_ir_init(GREE_IR_GPIO_NUM));
 }
