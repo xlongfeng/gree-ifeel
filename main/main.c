@@ -9,6 +9,7 @@
 #include <sys/param.h>
 #include <unistd.h>
 
+#include "button.h"
 #include "driver/i2c_master.h"
 #include "ds18b20.h"
 #include "esp_err.h"
@@ -27,6 +28,7 @@
 static const char *TAG = "thermostatic";
 
 #define DS18B20_GPIO_NUM GPIO_NUM_0
+#define BUTTON_GPIO_NUM GPIO_NUM_3
 #define GREE_IR_GPIO_NUM GPIO_NUM_4
 
 #define I2C_BUS_PORT 0
@@ -264,4 +266,5 @@ void app_main(void)
     xTaskCreate(temperature_task, "ds18b20", 4096, NULL, 5, NULL);
 
     ESP_ERROR_CHECK(gree_ir_init(GREE_IR_GPIO_NUM));
+    ESP_ERROR_CHECK(button_init(BUTTON_GPIO_NUM, NULL));
 }
