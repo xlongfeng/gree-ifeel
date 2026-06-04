@@ -58,7 +58,7 @@ static void enter_on(void)
     s_state = IFEEL_ON;
     s_setpoint = IFEEL_SETPOINT_DEFAULT;
     s_last_monitor_us = esp_timer_get_time();
-    led_on();
+    led_on_for(3);
     ac_turn_on();
     ESP_LOGI(TAG, "State → ON");
 }
@@ -66,7 +66,7 @@ static void enter_on(void)
 static void enter_off(void)
 {
     s_state = IFEEL_OFF;
-    led_off();
+    led_on_for(1);
     ac_turn_off();
     ESP_LOGI(TAG, "State → OFF");
 }
