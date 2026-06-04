@@ -1,0 +1,45 @@
+menu "iFeel GPIO Configuration"
+
+    config IFEEL_DS18B20_GPIO
+        int "DS18B20 one-wire GPIO"
+        default 7
+        range 0 21
+        help
+            GPIO number for the DS18B20 temperature sensor data line.
+
+    config IFEEL_IR_GPIO
+        int "GREE IR transmitter GPIO"
+        default 0
+        range 0 21
+        help
+            GPIO number for the IR LED (GREE AC transmitter).
+
+    config IFEEL_POWER_BUTTON_GPIO
+        int "Power button GPIO"
+        default 3
+        range 0 21
+        help
+            GPIO number for the power button (toggles AC on/off).
+
+    config IFEEL_TEMP_BUTTON_GPIO
+        int "Temperature button GPIO"
+        default 4
+        range 0 21
+        help
+            GPIO number for the temperature button (adjusts AC setpoint).
+
+    config IFEEL_LIGHT_BUTTON_GPIO
+        int "Light button GPIO"
+        default 10
+        range 0 21
+        help
+            GPIO number for the light button (toggles AC display light).
+
+    config IFEEL_LED_GPIO
+        int "Status LED GPIO"
+        default 8
+        range 0 21
+        help
+            GPIO number for the status LED (active-low).
+
+endmenu
