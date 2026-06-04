@@ -45,7 +45,41 @@ static const char *TAG = "ui";
 
 static uint8_t oled_buffer[SSD1306_LCD_H_RES * SSD1306_LCD_V_RES / 8];
 static _lock_t lvgl_api_lock;
-static lv_obj_t *s_temp_label = NULL;
+
+/* ── Layout constants ────────────────────────────────────────────────────── */
+
+#define UI_LABEL_MAX 8
+#define UI_GAP 1 /* 1px gap between areas */
+
+#define UI_TOP_H 12
+#define UI_MID_H 16
+#define UI_BOT_H 10
+/* y positions: top=0, mid=13, bot=30  (12+1+16+1=30, total=40) */
+#define UI_MID_Y (UI_TOP_H + UI_GAP)
+#define UI_BOT_Y (UI_TOP_H + UI_GAP + UI_MID_H + UI_GAP)
+
+#define UI_BAR_W 50
+#define UI_LED_W (SSD1306_LCD_H_RES - UI_BAR_W) /* 22 */
+
+#define UI_CYCLE_INTERVAL_US 2000000ULL /* 2 s */
+#define UI_BLINK_INTERVAL_US 1000000ULL /* 1 s */
+
+typedef struct {
+    lv_obj_t *lv_label;
+    bool hidden;
+} ui_label_entry_t;
+
+static ui_label_entry_t s_labels[UI_LABEL_MAX];
+static int s_label_count = 0;
+static int s_cycle_idx = 0;
+static esp_timer_handle_t s_cycle_timer = NULL;
+
+static lv_obj_t *s_led_indicator = NULL;
+static lv_obj_t *s_bar = NULL;
+static lv_obj_t *s_mid_container = NULL;
+static esp_timer_handle_t s_led_blink_timer = NULL;
+static bool s_led_on = false;
+static bool s_led_blink_state = false;
 
 /* ── LVGL port callbacks ─────────────────────────────────────────────────── */
 
@@ -100,16 +134,156 @@ static void lvgl_port_task(void *arg)
     }
 }
 
+/* ── Label cycle helpers ─────────────────────────────────────────────────── */
+
+/* Advance to the next non-hidden label and update LVGL visibility. */
+static void label_cycle_advance(void)
+{
+    if (s_label_count == 0)
+        return;
+
+    /* Find next non-hidden label starting after current index */
+    int start = s_cycle_idx;
+    int next = -1;
+    for (int i = 1; i <= s_label_count; i++) {
+        int idx = (start + i) % s_label_count;
+        if (!s_labels[idx].hidden) {
+            next = idx;
+            break;
+        }
+    }
+    /* Also accept current if nothing else is visible */
+    if (next == -1 && !s_labels[start].hidden)
+        next = start;
+    if (next == -1) {
+        /* All hidden: hide everything */
+        for (int i = 0; i < s_label_count; i++)
+            lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    s_cycle_idx = next;
+    for (int i = 0; i < s_label_count; i++) {
+        if (i == next) {
+            lv_obj_remove_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+}
+
+static void label_cycle_cb(void *arg)
+{
+    ui_lock();
+    label_cycle_advance();
+    ui_unlock();
+}
+
+/* ── LED blink helper ────────────────────────────────────────────────────── */
+
+static void led_blink_cb(void *arg)
+{
+    ui_lock();
+    s_led_blink_state = !s_led_blink_state;
+    lv_obj_set_style_bg_opa(s_led_indicator, s_led_blink_state ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    ui_unlock();
+}
+
 /* ── UI widgets ──────────────────────────────────────────────────────────── */
+
+static void container_style(lv_obj_t *obj)
+{
+    lv_obj_set_style_pad_all(obj, 0, 0);
+    lv_obj_set_style_border_width(obj, 0, 0);
+    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_radius(obj, 0, 0);
+}
 
 static void lvgl_create_ui(lv_display_t *disp)
 {
+    /* Use the mono theme for correct monochrome rendering.
+     * dark_bg=false: LVGL background=white → OLED OFF → physical dark screen,
+     * foreground=black → OLED ON → physical bright elements (normal OLED look). */
+    lv_theme_mono_init(disp, false, &lv_font_montserrat_14);
+
     lv_obj_t *scr = lv_display_get_screen_active(disp);
-    s_temp_label = lv_label_create(scr);
-    lv_label_set_long_mode(s_temp_label, LV_LABEL_LONG_SCROLL_CIRCULAR);
-    lv_label_set_text(s_temp_label, "Thermostatic Control");
-    lv_obj_set_width(s_temp_label, lv_display_get_horizontal_resolution(disp));
-    lv_obj_align(s_temp_label, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_pad_all(scr, 0, 0);
+
+    /* Top area — fixed "GREE iFeel" label */
+    lv_obj_t *top = lv_obj_create(scr);
+    lv_obj_set_pos(top, 0, 0);
+    lv_obj_set_size(top, SSD1306_LCD_H_RES, UI_TOP_H);
+    container_style(top);
+    lv_obj_t *top_label = lv_label_create(top);
+    lv_label_set_text(top_label, "Gree iFeel");
+    lv_label_set_long_mode(top_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(top_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_size(top_label, SSD1306_LCD_H_RES, UI_TOP_H);
+    lv_obj_align(top_label, LV_ALIGN_TOP_MID, 0, 0);
+
+    /* Mid area — label stack */
+    lv_obj_t *mid = lv_obj_create(scr);
+    s_mid_container = mid;
+    lv_obj_set_pos(mid, 0, UI_MID_Y);
+    lv_obj_set_size(mid, SSD1306_LCD_H_RES, UI_MID_H);
+    container_style(mid);
+
+    /* Attach any already-pushed labels */
+    for (int i = 0; i < s_label_count; i++) {
+        lv_obj_set_parent(s_labels[i].lv_label, mid);
+        lv_obj_set_size(s_labels[i].lv_label, SSD1306_LCD_H_RES, UI_MID_H);
+        lv_obj_align(s_labels[i].lv_label, LV_ALIGN_CENTER, 0, 0);
+        lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
+    }
+    label_cycle_advance(); /* show first non-hidden label */
+
+    /* Start 1s cycle timer */
+    esp_timer_create_args_t cycle_args = {
+        .callback = label_cycle_cb,
+        .name = "ui_cycle",
+    };
+    esp_timer_create(&cycle_args, &s_cycle_timer);
+    esp_timer_start_periodic(s_cycle_timer, UI_CYCLE_INTERVAL_US);
+
+    /* Bottom area */
+    lv_obj_t *bot = lv_obj_create(scr);
+    lv_obj_set_pos(bot, 0, UI_BOT_Y);
+    lv_obj_set_size(bot, SSD1306_LCD_H_RES, UI_BOT_H);
+    container_style(bot);
+
+    /* Bar (left, 50px) */
+    s_bar = lv_bar_create(bot);
+    lv_obj_set_size(s_bar, UI_BAR_W - 2, UI_BOT_H - 2);
+    lv_obj_align(s_bar, LV_ALIGN_LEFT_MID, 1, 0);
+    lv_bar_set_range(s_bar, 0, 100);
+    lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
+    /* Explicit monochrome bar styles: transparent bg with bright border, bright indicator */
+    lv_obj_set_style_bg_opa(s_bar, LV_OPA_TRANSP, LV_PART_MAIN);
+    lv_obj_set_style_border_width(s_bar, 1, LV_PART_MAIN);
+    lv_obj_set_style_border_color(s_bar, lv_color_black(), LV_PART_MAIN); /* black → OLED ON */
+    lv_obj_set_style_radius(s_bar, 0, LV_PART_MAIN);
+    lv_obj_set_style_pad_all(s_bar, 0, LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(s_bar, lv_color_black(), LV_PART_INDICATOR); /* black → OLED ON */
+    lv_obj_set_style_radius(s_bar, 0, LV_PART_INDICATOR);
+
+    /* LED indicator (right, circular — 8×8 centred in the right portion) */
+    s_led_indicator = lv_obj_create(bot);
+    lv_obj_set_size(s_led_indicator, UI_BOT_H - 2, UI_BOT_H - 2); /* square for circle */
+    lv_obj_align(s_led_indicator, LV_ALIGN_RIGHT_MID, -1, 0);
+    lv_obj_set_style_pad_all(s_led_indicator, 0, 0);
+    lv_obj_set_style_border_width(s_led_indicator, 1, 0);
+    lv_obj_set_style_radius(s_led_indicator, LV_RADIUS_CIRCLE, 0);
+    /* black → OLED ON (bright); initially solid (OFF state = static solid) */
+    lv_obj_set_style_bg_color(s_led_indicator, lv_color_black(), 0);
+    lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
+
+    /* Create LED blink timer (not started yet) */
+    esp_timer_create_args_t blink_args = {
+        .callback = led_blink_cb,
+        .name = "ui_led_blink",
+    };
+    esp_timer_create(&blink_args, &s_led_blink_timer);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -153,6 +327,10 @@ esp_err_t ui_init(void)
     ESP_ERROR_CHECK(esp_lcd_new_panel_ssd1306(io_handle, &panel_config, &panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_reset(panel_handle));
     ESP_ERROR_CHECK(esp_lcd_panel_init(panel_handle));
+    // The ESP-IDF driver sets COM pins config 0x02 (sequential) for height != 64,
+    // but this display uses alternating COM pins (0x12), causing every other row to be
+    // skipped and content appearing at 2x height. Override with the correct value.
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, 0xDA, (uint8_t[]){0x12}, 1));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 28, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
@@ -196,12 +374,78 @@ void ui_lock(void) { _lock_acquire(&lvgl_api_lock); }
 
 void ui_unlock(void) { _lock_release(&lvgl_api_lock); }
 
-void lvgl_set_temperature(float temperature)
+ui_label_id_t ui_label_push(const char *text)
 {
-    if (s_temp_label == NULL) {
-        return;
+    if (s_label_count >= UI_LABEL_MAX) {
+        ESP_LOGE(TAG, "Label stack full");
+        return -1;
     }
-    char text[64];
-    sprintf(text, "RT: %.1f C", temperature);
-    lv_label_set_text(s_temp_label, text);
+    ui_label_id_t id = s_label_count++;
+    ui_label_entry_t *e = &s_labels[id];
+
+    lv_obj_t *parent = s_mid_container ? s_mid_container : lv_screen_active();
+    e->lv_label = lv_label_create(parent);
+    lv_label_set_text(e->lv_label, text);
+    lv_label_set_long_mode(e->lv_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(e->lv_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_size(e->lv_label, SSD1306_LCD_H_RES, UI_MID_H);
+    lv_obj_align(e->lv_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(e->lv_label, LV_OBJ_FLAG_HIDDEN);
+    e->hidden = false;
+
+    return id;
+}
+
+void ui_label_show(ui_label_id_t id)
+{
+    if (id < 0 || id >= s_label_count)
+        return;
+    s_labels[id].hidden = false;
+}
+
+void ui_label_hide(ui_label_id_t id)
+{
+    if (id < 0 || id >= s_label_count)
+        return;
+    s_labels[id].hidden = true;
+}
+
+void ui_label_set_text(ui_label_id_t id, const char *text)
+{
+    if (id < 0 || id >= s_label_count)
+        return;
+    lv_label_set_text(s_labels[id].lv_label, text);
+}
+
+void ui_set_led_indicator(bool on)
+{
+    if (!s_led_indicator || !s_led_blink_timer)
+        return;
+    s_led_on = on;
+    if (on) {
+        /* ON: blink */
+        s_led_blink_state = true;
+        ui_lock();
+        lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
+        ui_unlock();
+        esp_timer_stop(s_led_blink_timer);
+        esp_timer_start_periodic(s_led_blink_timer, UI_BLINK_INTERVAL_US);
+    } else {
+        /* OFF: static solid */
+        esp_timer_stop(s_led_blink_timer);
+        s_led_blink_state = false;
+        ui_lock();
+        lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
+        ui_unlock();
+    }
+}
+
+void ui_set_bar(int value, int min, int max)
+{
+    if (!s_bar)
+        return;
+    ui_lock();
+    lv_bar_set_range(s_bar, min, max);
+    lv_bar_set_value(s_bar, value, LV_ANIM_OFF);
+    ui_unlock();
 }

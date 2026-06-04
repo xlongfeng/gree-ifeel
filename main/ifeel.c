@@ -97,10 +97,6 @@ void ifeel_button_pressed(void)
 
 void ifeel_on_temperature(float temperature)
 {
-    ui_lock();
-    lvgl_set_temperature(temperature);
-    ui_unlock();
-
     if (s_state != IFEEL_ON) {
         return;
     }
