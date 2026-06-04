@@ -20,6 +20,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "gree_ir.h"
+#include "ifeel.h"
 #include "led.h"
 #include "lvgl.h"
 #include "onewire_bus.h"
@@ -28,9 +29,9 @@
 
 static const char *TAG = "thermostatic";
 
-#define DS18B20_GPIO_NUM GPIO_NUM_0
+#define DS18B20_GPIO_NUM GPIO_NUM_7
 #define BUTTON_GPIO_NUM GPIO_NUM_3
-#define GREE_IR_GPIO_NUM GPIO_NUM_4
+#define GREE_IR_GPIO_NUM GPIO_NUM_0
 #define LED_GPIO_NUM GPIO_NUM_8
 
 #define I2C_BUS_PORT 0
@@ -166,6 +167,7 @@ static void temperature_task(void *arg)
             if (ds18b20_trigger_temperature_conversion(s_ds18b20) == ESP_OK &&
                 ds18b20_get_temperature(s_ds18b20, &temperature) == ESP_OK) {
                 ESP_LOGI(TAG, "Temperature: %.1f C", temperature);
+                ifeel_on_temperature(temperature);
                 _lock_acquire(&lvgl_api_lock);
                 lvgl_set_temperature(temperature);
                 _lock_release(&lvgl_api_lock);
@@ -269,5 +271,6 @@ void app_main(void)
 
     ESP_ERROR_CHECK(led_init(LED_GPIO_NUM));
     ESP_ERROR_CHECK(gree_ir_init(GREE_IR_GPIO_NUM));
-    ESP_ERROR_CHECK(button_init(BUTTON_GPIO_NUM, NULL));
+    ESP_ERROR_CHECK(button_init(BUTTON_GPIO_NUM, ifeel_button_pressed));
+    ESP_ERROR_CHECK(ifeel_init());
 }
