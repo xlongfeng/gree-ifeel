@@ -7,6 +7,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -18,10 +19,17 @@ extern "C" {
  */
 esp_err_t led_init(int gpio_num);
 
-/** @brief Turn the LED on. */
+/** @brief Turn the LED on (stays on indefinitely). */
 void led_on(void);
 
-/** @brief Turn the LED off. */
+/**
+ * @brief Turn the LED on for a fixed duration, then auto off.
+ * @param seconds  Duration in seconds before the LED turns off automatically.
+ *                 Calling again before expiry restarts the timer.
+ */
+void led_on_for(uint32_t seconds);
+
+/** @brief Turn the LED off (also cancels any pending auto-off timer). */
 void led_off(void);
 
 /** @brief Toggle the LED state. */
