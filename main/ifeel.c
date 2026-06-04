@@ -10,6 +10,7 @@
 #include "freertos/FreeRTOS.h"
 #include "gree_ir.h"
 #include "led.h"
+#include "ui.h"
 
 #define IFEEL_SETPOINT_DEFAULT 27
 #define IFEEL_SETPOINT_MIN 24
@@ -96,6 +97,10 @@ void ifeel_button_pressed(void)
 
 void ifeel_on_temperature(float temperature)
 {
+    ui_lock();
+    lvgl_set_temperature(temperature);
+    ui_unlock();
+
     if (s_state != IFEEL_ON) {
         return;
     }
