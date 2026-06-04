@@ -30,7 +30,9 @@
 static const char *TAG = "thermostatic";
 
 #define DS18B20_GPIO_NUM GPIO_NUM_7
-#define BUTTON_GPIO_NUM GPIO_NUM_3
+#define POWER_BUTTON_GPIO_NUM GPIO_NUM_3
+#define TEMP_BUTTON_GPIO_NUM GPIO_NUM_4
+#define LIGHT_BUTTON_GPIO_NUM GPIO_NUM_10
 #define GREE_IR_GPIO_NUM GPIO_NUM_0
 #define LED_GPIO_NUM GPIO_NUM_8
 
@@ -271,6 +273,8 @@ void app_main(void)
 
     ESP_ERROR_CHECK(led_init(LED_GPIO_NUM));
     ESP_ERROR_CHECK(gree_ir_init(GREE_IR_GPIO_NUM));
-    ESP_ERROR_CHECK(button_init(BUTTON_GPIO_NUM, ifeel_button_pressed));
+    ESP_ERROR_CHECK(button_init(POWER_BUTTON_GPIO_NUM, ifeel_button_pressed));
+    ESP_ERROR_CHECK(button_init(TEMP_BUTTON_GPIO_NUM, ifeel_temperature_pressed));
+    ESP_ERROR_CHECK(button_init(LIGHT_BUTTON_GPIO_NUM, ifeel_light_pressed));
     ESP_ERROR_CHECK(ifeel_init());
 }

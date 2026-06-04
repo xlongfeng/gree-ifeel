@@ -22,6 +22,7 @@ static const char *TAG = "ifeel";
 
 static ifeel_state_t s_state = IFEEL_OFF;
 static uint8_t s_setpoint = IFEEL_SETPOINT_DEFAULT;
+static bool s_light = false;
 static int64_t s_last_monitor_us = 0;
 
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
@@ -33,8 +34,9 @@ static void ac_turn_on(void)
         .mode = GREE_MODE_COOL,
         .temperature = s_setpoint,
         .fan = GREE_FAN_AUTO,
+        .light = s_light,
     };
-    ESP_LOGI(TAG, "AC ON  setpoint=%d°C", s_setpoint);
+    ESP_LOGI(TAG, "AC ON  setpoint=%d°C light=%d", s_setpoint, s_light);
     gree_ir_send(&ac);
 }
 
@@ -45,8 +47,9 @@ static void ac_turn_off(void)
         .mode = GREE_MODE_COOL,
         .temperature = IFEEL_SETPOINT_DEFAULT,
         .fan = GREE_FAN_AUTO,
+        .light = s_light,
     };
-    ESP_LOGI(TAG, "AC OFF");
+    ESP_LOGI(TAG, "AC OFF light=%d", s_light);
     gree_ir_send(&ac);
 }
 
@@ -57,8 +60,6 @@ static void enter_on(void)
     s_last_monitor_us = esp_timer_get_time();
     led_on();
     ac_turn_on();
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ac_turn_on();
     ESP_LOGI(TAG, "State → ON");
 }
 
@@ -66,8 +67,6 @@ static void enter_off(void)
 {
     s_state = IFEEL_OFF;
     led_off();
-    ac_turn_off();
-    vTaskDelay(pdMS_TO_TICKS(100));
     ac_turn_off();
     ESP_LOGI(TAG, "State → OFF");
 }
@@ -124,6 +123,30 @@ void ifeel_on_temperature(float temperature)
     } else {
         ESP_LOGI(TAG, "No adjustment (room=%.1f°C setpoint=%d°C)", temperature, s_setpoint);
     }
+}
+
+void ifeel_temperature_pressed(void)
+{
+    if (s_state != IFEEL_ON) {
+        return;
+    }
+    s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
+    ESP_LOGI(TAG, "Temperature button: setpoint → %d°C", s_setpoint);
+    ac_turn_on();
+}
+
+void ifeel_light_pressed(void)
+{
+    s_light = !s_light;
+    ESP_LOGI(TAG, "Light button: light → %d", s_light);
+    gree_ac_state_t ac = {
+        .power = (s_state == IFEEL_ON),
+        .mode = GREE_MODE_COOL,
+        .temperature = s_setpoint,
+        .fan = GREE_FAN_AUTO,
+        .light = s_light,
+    };
+    gree_ir_send(&ac);
 }
 
 ifeel_state_t ifeel_get_state(void) { return s_state; }

@@ -30,6 +30,21 @@ esp_err_t ifeel_init(void);
 void ifeel_button_pressed(void);
 
 /**
+ * @brief Handle the temperature button press.
+ *
+ * Only active in ON state. Increments s_setpoint by 1, wrapping from
+ * IFEEL_SETPOINT_MAX back to IFEEL_SETPOINT_MIN. Resends the AC command.
+ */
+void ifeel_temperature_pressed(void);
+
+/**
+ * @brief Handle the light button press.
+ *
+ * Works in any state. Toggles the AC display light and resends the IR command.
+ */
+void ifeel_light_pressed(void);
+
+/**
  * @brief Feed the latest room temperature reading.
  *
  * Must be called every second from the DS18B20 task.
