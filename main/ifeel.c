@@ -26,9 +26,6 @@ static uint8_t s_setpoint = IFEEL_SETPOINT_DEFAULT;
 static bool s_light = false;
 static int64_t s_last_monitor_us = 0;
 
-static ui_label_id_t s_label_rt = -1;
-static ui_label_id_t s_label_st = -1;
-
 /* ── Helpers ──────────────────────────────────────────────────────────────── */
 
 static void ac_turn_on(void)
@@ -67,11 +64,8 @@ static void enter_on(void)
     ui_set_led_indicator(true);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
     char buf[16];
-    snprintf(buf, sizeof(buf), "ST: %d °C", s_setpoint);
-    ui_lock();
-    ui_label_set_text(s_label_st, buf);
-    ui_label_show(s_label_st);
-    ui_unlock();
+    snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
+    ui_set_top_label(buf);
     ESP_LOGI(TAG, "State → ON");
 }
 
@@ -82,9 +76,7 @@ static void enter_off(void)
     ac_turn_off();
     ui_set_led_indicator(false);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
-    ui_lock();
-    ui_label_hide(s_label_st);
-    ui_unlock();
+    ui_set_top_label("Gree iFeel");
     ESP_LOGI(TAG, "State → OFF");
 }
 
@@ -95,13 +87,6 @@ esp_err_t ifeel_init(void)
     s_state = IFEEL_OFF;
     s_setpoint = IFEEL_SETPOINT_DEFAULT;
     s_last_monitor_us = 0;
-
-    ui_lock();
-    s_label_rt = ui_label_push("RT: --.- °C");
-    s_label_st = ui_label_push("ST: -- °C");
-    ui_label_hide(s_label_st);
-    ui_unlock();
-
     ESP_LOGI(TAG, "State → OFF (AC untouched)");
     return ESP_OK;
 }
@@ -122,10 +107,8 @@ void ifeel_on_temperature(float temperature)
 {
     /* Always update the room temperature label */
     char rt_buf[16];
-    snprintf(rt_buf, sizeof(rt_buf), "RT: %.1f °C", temperature);
-    ui_lock();
-    ui_label_set_text(s_label_rt, rt_buf);
-    ui_unlock();
+    snprintf(rt_buf, sizeof(rt_buf), "RT: %.1f\xC2\xB0\x43", temperature);
+    ui_set_mid_label(rt_buf);
 
     if (s_state != IFEEL_ON) {
         return;
@@ -156,10 +139,8 @@ void ifeel_on_temperature(float temperature)
         s_setpoint = new_setpoint;
         ESP_LOGI(TAG, "Adjust setpoint → %d°C (room=%.1f°C)", s_setpoint, temperature);
         char st_buf[16];
-        snprintf(st_buf, sizeof(st_buf), "ST: %d °C", s_setpoint);
-        ui_lock();
-        ui_label_set_text(s_label_st, st_buf);
-        ui_unlock();
+        snprintf(st_buf, sizeof(st_buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
+        ui_set_top_label(st_buf);
         ac_turn_on();
     } else {
         ESP_LOGI(TAG, "No adjustment (room=%.1f°C setpoint=%d°C)", temperature, s_setpoint);
@@ -174,10 +155,8 @@ void ifeel_temperature_pressed(void)
     s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
     ESP_LOGI(TAG, "Temperature button: setpoint → %d°C", s_setpoint);
     char buf[16];
-    snprintf(buf, sizeof(buf), "ST: %d °C", s_setpoint);
-    ui_lock();
-    ui_label_set_text(s_label_st, buf);
-    ui_unlock();
+    snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
+    ui_set_top_label(buf);
     ac_turn_on();
 }
 

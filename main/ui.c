@@ -48,7 +48,6 @@ static _lock_t lvgl_api_lock;
 
 /* ── Layout constants ────────────────────────────────────────────────────── */
 
-#define UI_LABEL_MAX 8
 #define UI_GAP 1 /* 1px gap between areas */
 
 #define UI_TOP_H 12
@@ -61,22 +60,13 @@ static _lock_t lvgl_api_lock;
 #define UI_BAR_W 50
 #define UI_LED_W (SSD1306_LCD_H_RES - UI_BAR_W) /* 22 */
 
-#define UI_CYCLE_INTERVAL_US 2000000ULL /* 2 s */
 #define UI_BLINK_INTERVAL_US 1000000ULL /* 1 s */
 
-typedef struct {
-    lv_obj_t *lv_label;
-    bool hidden;
-} ui_label_entry_t;
-
-static ui_label_entry_t s_labels[UI_LABEL_MAX];
-static int s_label_count = 0;
-static int s_cycle_idx = 0;
-static esp_timer_handle_t s_cycle_timer = NULL;
+static lv_obj_t *s_top_label = NULL;
+static lv_obj_t *s_mid_label = NULL;
 
 static lv_obj_t *s_led_indicator = NULL;
 static lv_obj_t *s_bar = NULL;
-static lv_obj_t *s_mid_container = NULL;
 static esp_timer_handle_t s_led_blink_timer = NULL;
 static bool s_led_on = false;
 static bool s_led_blink_state = false;
@@ -137,56 +127,14 @@ static void lvgl_port_task(void *arg)
 /* ── Label cycle helpers ─────────────────────────────────────────────────── */
 
 /* Advance to the next non-hidden label and update LVGL visibility. */
-static void label_cycle_advance(void)
-{
-    if (s_label_count == 0)
-        return;
-
-    /* Find next non-hidden label starting after current index */
-    int start = s_cycle_idx;
-    int next = -1;
-    for (int i = 1; i <= s_label_count; i++) {
-        int idx = (start + i) % s_label_count;
-        if (!s_labels[idx].hidden) {
-            next = idx;
-            break;
-        }
-    }
-    /* Also accept current if nothing else is visible */
-    if (next == -1 && !s_labels[start].hidden)
-        next = start;
-    if (next == -1) {
-        /* All hidden: hide everything */
-        for (int i = 0; i < s_label_count; i++)
-            lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
-        return;
-    }
-
-    s_cycle_idx = next;
-    for (int i = 0; i < s_label_count; i++) {
-        if (i == next) {
-            lv_obj_remove_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
-        } else {
-            lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
-        }
-    }
-}
-
-static void label_cycle_cb(void *arg)
-{
-    ui_lock();
-    label_cycle_advance();
-    ui_unlock();
-}
-
 /* ── LED blink helper ────────────────────────────────────────────────────── */
 
 static void led_blink_cb(void *arg)
 {
-    ui_lock();
+    _lock_acquire(&lvgl_api_lock);
     s_led_blink_state = !s_led_blink_state;
     lv_obj_set_style_bg_opa(s_led_indicator, s_led_blink_state ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
-    ui_unlock();
+    _lock_release(&lvgl_api_lock);
 }
 
 /* ── UI widgets ──────────────────────────────────────────────────────────── */
@@ -209,41 +157,29 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_t *scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    /* Top area — fixed "GREE iFeel" label */
+    /* Top area — label: "Gree iFeel" (OFF) or setpoint (ON) */
     lv_obj_t *top = lv_obj_create(scr);
     lv_obj_set_pos(top, 0, 0);
     lv_obj_set_size(top, SSD1306_LCD_H_RES, UI_TOP_H);
     container_style(top);
-    lv_obj_t *top_label = lv_label_create(top);
-    lv_label_set_text(top_label, "Gree iFeel");
-    lv_label_set_long_mode(top_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(top_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_size(top_label, SSD1306_LCD_H_RES, UI_TOP_H);
-    lv_obj_align(top_label, LV_ALIGN_TOP_MID, 0, 0);
+    s_top_label = lv_label_create(top);
+    lv_label_set_text(s_top_label, "Gree iFeel");
+    lv_label_set_long_mode(s_top_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(s_top_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_size(s_top_label, SSD1306_LCD_H_RES, UI_TOP_H);
+    lv_obj_align(s_top_label, LV_ALIGN_TOP_MID, 0, 0);
 
-    /* Mid area — label stack */
+    /* Mid area — single label for room temperature */
     lv_obj_t *mid = lv_obj_create(scr);
-    s_mid_container = mid;
     lv_obj_set_pos(mid, 0, UI_MID_Y);
     lv_obj_set_size(mid, SSD1306_LCD_H_RES, UI_MID_H);
     container_style(mid);
-
-    /* Attach any already-pushed labels */
-    for (int i = 0; i < s_label_count; i++) {
-        lv_obj_set_parent(s_labels[i].lv_label, mid);
-        lv_obj_set_size(s_labels[i].lv_label, SSD1306_LCD_H_RES, UI_MID_H);
-        lv_obj_align(s_labels[i].lv_label, LV_ALIGN_CENTER, 0, 0);
-        lv_obj_add_flag(s_labels[i].lv_label, LV_OBJ_FLAG_HIDDEN);
-    }
-    label_cycle_advance(); /* show first non-hidden label */
-
-    /* Start 1s cycle timer */
-    esp_timer_create_args_t cycle_args = {
-        .callback = label_cycle_cb,
-        .name = "ui_cycle",
-    };
-    esp_timer_create(&cycle_args, &s_cycle_timer);
-    esp_timer_start_periodic(s_cycle_timer, UI_CYCLE_INTERVAL_US);
+    s_mid_label = lv_label_create(mid);
+    lv_label_set_text(s_mid_label, "RT: --.-\xC2\xB0\x43");
+    lv_label_set_long_mode(s_mid_label, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(s_mid_label, &lv_font_montserrat_12, 0);
+    lv_obj_set_size(s_mid_label, SSD1306_LCD_H_RES, UI_MID_H);
+    lv_obj_align(s_mid_label, LV_ALIGN_CENTER, 0, 0);
 
     /* Bottom area */
     lv_obj_t *bot = lv_obj_create(scr);
@@ -370,51 +306,22 @@ esp_err_t ui_init(void)
     return ESP_OK;
 }
 
-void ui_lock(void) { _lock_acquire(&lvgl_api_lock); }
-
-void ui_unlock(void) { _lock_release(&lvgl_api_lock); }
-
-ui_label_id_t ui_label_push(const char *text)
+void ui_set_top_label(const char *text)
 {
-    if (s_label_count >= UI_LABEL_MAX) {
-        ESP_LOGE(TAG, "Label stack full");
-        return -1;
-    }
-    ui_label_id_t id = s_label_count++;
-    ui_label_entry_t *e = &s_labels[id];
-
-    lv_obj_t *parent = s_mid_container ? s_mid_container : lv_screen_active();
-    e->lv_label = lv_label_create(parent);
-    lv_label_set_text(e->lv_label, text);
-    lv_label_set_long_mode(e->lv_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(e->lv_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_size(e->lv_label, SSD1306_LCD_H_RES, UI_MID_H);
-    lv_obj_align(e->lv_label, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_add_flag(e->lv_label, LV_OBJ_FLAG_HIDDEN);
-    e->hidden = false;
-
-    return id;
+    if (!s_top_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_top_label, text);
+    _lock_release(&lvgl_api_lock);
 }
 
-void ui_label_show(ui_label_id_t id)
+void ui_set_mid_label(const char *text)
 {
-    if (id < 0 || id >= s_label_count)
+    if (!s_mid_label)
         return;
-    s_labels[id].hidden = false;
-}
-
-void ui_label_hide(ui_label_id_t id)
-{
-    if (id < 0 || id >= s_label_count)
-        return;
-    s_labels[id].hidden = true;
-}
-
-void ui_label_set_text(ui_label_id_t id, const char *text)
-{
-    if (id < 0 || id >= s_label_count)
-        return;
-    lv_label_set_text(s_labels[id].lv_label, text);
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_mid_label, text);
+    _lock_release(&lvgl_api_lock);
 }
 
 void ui_set_led_indicator(bool on)
@@ -425,18 +332,18 @@ void ui_set_led_indicator(bool on)
     if (on) {
         /* ON: blink */
         s_led_blink_state = true;
-        ui_lock();
+        _lock_acquire(&lvgl_api_lock);
         lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
-        ui_unlock();
+        _lock_release(&lvgl_api_lock);
         esp_timer_stop(s_led_blink_timer);
         esp_timer_start_periodic(s_led_blink_timer, UI_BLINK_INTERVAL_US);
     } else {
         /* OFF: static solid */
         esp_timer_stop(s_led_blink_timer);
         s_led_blink_state = false;
-        ui_lock();
+        _lock_acquire(&lvgl_api_lock);
         lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
-        ui_unlock();
+        _lock_release(&lvgl_api_lock);
     }
 }
 
@@ -444,8 +351,8 @@ void ui_set_bar(int value, int min, int max)
 {
     if (!s_bar)
         return;
-    ui_lock();
+    _lock_acquire(&lvgl_api_lock);
     lv_bar_set_range(s_bar, min, max);
     lv_bar_set_value(s_bar, value, LV_ANIM_OFF);
-    ui_unlock();
+    _lock_release(&lvgl_api_lock);
 }

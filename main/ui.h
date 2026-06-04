@@ -19,38 +19,18 @@ extern "C" {
  */
 esp_err_t ui_init(void);
 
-/** @brief Acquire the LVGL API mutex (must be held around all ui_label_* calls). */
-void ui_lock(void);
-
-/** @brief Release the LVGL API mutex. */
-void ui_unlock(void);
-
-/* ── Label stack ─────────────────────────────────────────────────────────── */
+/* ── Labels ──────────────────────────────────────────────────────────────── */
 
 /**
- * @brief Opaque label identifier returned by ui_label_push().
+ * @brief Set the top area label text.
+ *        Shows "GREE iFeel" when iFeel is OFF, setpoint when ON.
  */
-typedef int ui_label_id_t;
+void ui_set_top_label(const char *text);
 
 /**
- * @brief Add a new label at the bottom of the stack (lowest priority).
- *
- * Must be called with ui_lock held (or before the LVGL task starts).
- *
- * @param text  Initial label text
- * @return      Label ID to pass to other ui_label_* functions,
- *              or -1 if the stack is full.
+ * @brief Set the mid area label text (room temperature).
  */
-ui_label_id_t ui_label_push(const char *text);
-
-/** @brief Show a label (include it in the rotation cycle). Must be called with ui_lock held. */
-void ui_label_show(ui_label_id_t id);
-
-/** @brief Hide a label (exclude it from the rotation cycle). Must be called with ui_lock held. */
-void ui_label_hide(ui_label_id_t id);
-
-/** @brief Update a label's text. Must be called with ui_lock held. */
-void ui_label_set_text(ui_label_id_t id, const char *text);
+void ui_set_mid_label(const char *text);
 
 /* ── Lower area ──────────────────────────────────────────────────────────── */
 
