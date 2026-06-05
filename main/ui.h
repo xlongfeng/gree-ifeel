@@ -19,32 +19,24 @@ extern "C" {
  */
 esp_err_t ui_init(void);
 
-/* ── Labels ──────────────────────────────────────────────────────────────── */
-
 /**
- * @brief Set the top area label text.
- *        Shows "GREE iFeel" when iFeel is OFF, setpoint when ON.
+ * @brief Switch between main window (OFF) and monitor window (ON).
+ * @param show  true → monitor foreground; false → main foreground
  */
-void ui_set_top_label(const char *text);
+void ui_show_monitor(bool show);
 
 /**
- * @brief Set the mid area label text (room temperature).
+ * @brief Set the setpoint label in the monitor window.
  */
-void ui_set_mid_label(const char *text);
-
-/* ── Lower area ──────────────────────────────────────────────────────────── */
+void ui_set_st(const char *text);
 
 /**
- * @brief Start or stop bar blinking at 1s intervals.
- *        Call with true on iFeel OFF, false on iFeel ON.
+ * @brief Set the room-temperature label in both windows.
  */
-void ui_set_bar_blinking(bool blink);
+void ui_set_rt(const char *text);
 
 /**
- * @brief Set the progress bar value (full-width bottom area).
- * @param value  Current value
- * @param min    Minimum value
- * @param max    Maximum value
+ * @brief Set the progress bar value in the monitor window.
  */
 void ui_set_bar(int value, int min, int max);
 

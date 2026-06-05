@@ -46,25 +46,18 @@ static const char *TAG = "ui";
 static uint8_t oled_buffer[SSD1306_LCD_H_RES * SSD1306_LCD_V_RES / 8];
 static _lock_t lvgl_api_lock;
 
-/* ── Layout constants ────────────────────────────────────────────────────── */
+#define UI_BAR_H 8
 
-#define UI_GAP 1 /* 1px gap between areas */
+/* Main window widgets (visible when OFF) */
+static lv_obj_t *s_main_win = NULL;
+static lv_obj_t *s_main_rt_label = NULL;
 
-#define UI_TOP_H 12
-#define UI_MID_H 16
-#define UI_BOT_H 10
-/* y positions: top=0, mid=13, bot=30  (12+1+16+1=30, total=40) */
-#define UI_MID_Y (UI_TOP_H + UI_GAP)
-#define UI_BOT_Y (UI_TOP_H + UI_GAP + UI_MID_H + UI_GAP)
-
-#define UI_BLINK_INTERVAL_US 1000000ULL /* 1 s */
-
-static lv_obj_t *s_top_label = NULL;
-static lv_obj_t *s_mid_label = NULL;
-
+/* Monitor window widgets (visible when ON) */
+static lv_obj_t *s_monitor_win = NULL;
+static lv_obj_t *s_monitor_st_label = NULL;
+static lv_obj_t *s_monitor_rt_label = NULL;
 static lv_obj_t *s_bar = NULL;
-static esp_timer_handle_t s_bar_blink_timer = NULL;
-static bool s_bar_blink_state = false;
+
 
 /* ── LVGL port callbacks ─────────────────────────────────────────────────── */
 
@@ -119,32 +112,30 @@ static void lvgl_port_task(void *arg)
     }
 }
 
-/* ── Label cycle helpers ─────────────────────────────────────────────────── */
+/* ── Widget helpers ──────────────────────────────────────────────────────── */
 
-/* Advance to the next non-hidden label and update LVGL visibility. */
-/* ── Bar blink helper ────────────────────────────────────────────────────── */
-
-static void bar_blink_cb(void *arg)
+static void win_style(lv_obj_t *win)
 {
-    _lock_acquire(&lvgl_api_lock);
-    s_bar_blink_state = !s_bar_blink_state;
-    if (s_bar_blink_state) {
-        lv_obj_remove_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-    } else {
-        lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-    }
-    _lock_release(&lvgl_api_lock);
+    lv_obj_set_size(win, SSD1306_LCD_H_RES, SSD1306_LCD_V_RES);
+    lv_obj_set_pos(win, 0, 0);
+    lv_obj_set_style_pad_all(win, 0, 0);
+    lv_obj_set_style_pad_gap(win, 0, 0);
+    lv_obj_set_style_border_width(win, 0, 0);
+    lv_obj_set_style_radius(win, 0, 0);
+    lv_obj_set_style_bg_opa(win, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(win, lv_color_white(), 0);
 }
 
-/* ── UI widgets ──────────────────────────────────────────────────────────── */
-
-static void container_style(lv_obj_t *obj)
+static lv_obj_t *make_label(lv_obj_t *parent, const char *text)
 {
-    lv_obj_set_style_pad_all(obj, 0, 0);
-    lv_obj_set_style_border_width(obj, 0, 0);
-    lv_obj_set_style_bg_opa(obj, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_radius(obj, 0, 0);
+    lv_obj_t *lbl = lv_label_create(parent);
+    lv_label_set_text(lbl, text);
+    lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
+    lv_obj_set_style_text_font(lbl, &lv_font_montserrat_12, 0);
+    return lbl;
 }
+
+/* ── UI creation ─────────────────────────────────────────────────────────── */
 
 static void lvgl_create_ui(lv_display_t *disp)
 {
@@ -156,43 +147,17 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_t *scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    /* Top area — label: "Gree iFeel" (OFF) or setpoint (ON) */
-    lv_obj_t *top = lv_obj_create(scr);
-    lv_obj_set_pos(top, 0, 0);
-    lv_obj_set_size(top, SSD1306_LCD_H_RES, UI_TOP_H);
-    container_style(top);
-    s_top_label = lv_label_create(top);
-    lv_label_set_text(s_top_label, "Gree iFeel");
-    lv_label_set_long_mode(s_top_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(s_top_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_size(s_top_label, SSD1306_LCD_H_RES, UI_TOP_H);
-    lv_obj_align(s_top_label, LV_ALIGN_TOP_MID, 0, 0);
+    /* Monitor window — created first so it sits behind main by default */
+    s_monitor_win = lv_obj_create(scr);
+    win_style(s_monitor_win);
+    lv_obj_set_flex_flow(s_monitor_win, LV_FLEX_FLOW_COLUMN);
+    s_monitor_st_label = make_label(s_monitor_win, "ST: --\xC2\xB0\x43");
+    s_monitor_rt_label = make_label(s_monitor_win, "RT: --.-\xC2\xB0\x43");
 
-    /* Mid area — single label for room temperature */
-    lv_obj_t *mid = lv_obj_create(scr);
-    lv_obj_set_pos(mid, 0, UI_MID_Y);
-    lv_obj_set_size(mid, SSD1306_LCD_H_RES, UI_MID_H);
-    container_style(mid);
-    s_mid_label = lv_label_create(mid);
-    lv_label_set_text(s_mid_label, "RT: --.-\xC2\xB0\x43");
-    lv_label_set_long_mode(s_mid_label, LV_LABEL_LONG_CLIP);
-    lv_obj_set_style_text_font(s_mid_label, &lv_font_montserrat_12, 0);
-    lv_obj_set_size(s_mid_label, SSD1306_LCD_H_RES, UI_MID_H);
-    lv_obj_align(s_mid_label, LV_ALIGN_CENTER, 0, 0);
-
-    /* Bottom area */
-    lv_obj_t *bot = lv_obj_create(scr);
-    lv_obj_set_pos(bot, 0, UI_BOT_Y);
-    lv_obj_set_size(bot, SSD1306_LCD_H_RES, UI_BOT_H);
-    container_style(bot);
-
-    /* Bar — full width */
-    s_bar = lv_bar_create(bot);
-    lv_obj_set_size(s_bar, SSD1306_LCD_H_RES - 2, UI_BOT_H - 2);
-    lv_obj_align(s_bar, LV_ALIGN_CENTER, 0, 0);
+    s_bar = lv_bar_create(s_monitor_win);
+    lv_obj_set_size(s_bar, SSD1306_LCD_H_RES - 2, UI_BAR_H);
     lv_bar_set_range(s_bar, 0, 100);
     lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
-    /* Explicit monochrome bar styles: transparent bg with bright border, bright indicator */
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_bar, 1, LV_PART_MAIN);
     lv_obj_set_style_border_color(s_bar, lv_color_black(), LV_PART_MAIN);
@@ -202,14 +167,12 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_set_style_bg_color(s_bar, lv_color_black(), LV_PART_INDICATOR);
     lv_obj_set_style_radius(s_bar, 0, LV_PART_INDICATOR);
 
-    /* Bar blink timer — starts immediately (OFF state = blinking) */
-    esp_timer_create_args_t blink_args = {
-        .callback = bar_blink_cb,
-        .name = "ui_bar_blink",
-    };
-    esp_timer_create(&blink_args, &s_bar_blink_timer);
-    s_bar_blink_state = true;
-    esp_timer_start_periodic(s_bar_blink_timer, UI_BLINK_INTERVAL_US);
+    /* Main window — created last so it starts in the foreground (OFF state) */
+    s_main_win = lv_obj_create(scr);
+    win_style(s_main_win);
+    lv_obj_set_flex_flow(s_main_win, LV_FLEX_FLOW_COLUMN);
+    make_label(s_main_win, "Gree iFeel");
+    s_main_rt_label = make_label(s_main_win, "RT: --.-\xC2\xB0\x43");
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -303,40 +266,36 @@ esp_err_t ui_init(void)
     return ESP_OK;
 }
 
-void ui_set_top_label(const char *text)
+void ui_show_monitor(bool show)
 {
-    if (!s_top_label)
+    if (!s_monitor_win)
         return;
     _lock_acquire(&lvgl_api_lock);
-    lv_label_set_text(s_top_label, text);
-    _lock_release(&lvgl_api_lock);
-}
-
-void ui_set_mid_label(const char *text)
-{
-    if (!s_mid_label)
-        return;
-    _lock_acquire(&lvgl_api_lock);
-    lv_label_set_text(s_mid_label, text);
-    _lock_release(&lvgl_api_lock);
-}
-
-void ui_set_bar_blinking(bool blink)
-{
-    if (!s_bar || !s_bar_blink_timer)
-        return;
-    if (blink) {
-        s_bar_blink_state = true;
-        esp_timer_stop(s_bar_blink_timer);
-        esp_timer_start_periodic(s_bar_blink_timer, UI_BLINK_INTERVAL_US);
+    if (show) {
+        lv_obj_move_foreground(s_monitor_win);
     } else {
-        esp_timer_stop(s_bar_blink_timer);
-        s_bar_blink_state = false;
-        /* Ensure bar is visible when blinking stops */
-        _lock_acquire(&lvgl_api_lock);
-        lv_obj_remove_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
-        _lock_release(&lvgl_api_lock);
+        lv_obj_move_background(s_monitor_win);
     }
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_set_st(const char *text)
+{
+    if (!s_monitor_st_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_monitor_st_label, text);
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_set_rt(const char *text)
+{
+    if (!s_main_rt_label || !s_monitor_rt_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_main_rt_label, text);
+    lv_label_set_text(s_monitor_rt_label, text);
+    _lock_release(&lvgl_api_lock);
 }
 
 void ui_set_bar(int value, int min, int max)
@@ -348,3 +307,4 @@ void ui_set_bar(int value, int min, int max)
     lv_bar_set_value(s_bar, value, LV_ANIM_OFF);
     _lock_release(&lvgl_api_lock);
 }
+

@@ -114,19 +114,23 @@ inversion: LVGL black → OLED bright pixel; LVGL white → OLED off pixel.
 
 #### Screen layout (72 × 40 px)
 
+Two full-screen windows stacked; z-order switches on state change.
+
+**Main window** (foreground when OFF):
 ```
-┌──────────────────────────────────────────────┐ ← y=0
-│     Top label  (12px, Montserrat 12)         │
-│   "GREE iFeel" (OFF) / "ST: xx°C" (ON)       │
-├──────────────────────────────────────────────┤ ← y=12  (1px gap)
-│                                              │
-│     Mid label  (16px, Montserrat 12)         │
-│         "RT: xx.x°C"                         │
-│                                              │
-├──────────────────────────────────────────────┤ ← y=29  (1px gap)
-│         Progress bar  (10px, full width)     │
-│   blinks 1s when OFF / fills when ON         │
-└──────────────────────────────────────────────┘ ← y=40
+┌──────────────────────────────────────────────┐
+│  Gree iFeel                                  │
+│  RT: xx.x°C                                  │
+└──────────────────────────────────────────────┘
+```
+
+**Monitor window** (foreground when ON):
+```
+┌──────────────────────────────────────────────┐
+│  ST: xx°C                                    │
+│  RT: xx.x°C                                  │
+│  ████████░░░░░░░░░░  (progress bar)           │
+└──────────────────────────────────────────────┘
 ```
 
 #### LVGL configuration
@@ -141,10 +145,10 @@ inversion: LVGL black → OLED bright pixel; LVGL white → OLED off pixel.
 
 ```c
 esp_err_t ui_init(void);
-void ui_set_top_label(const char *text);   // acquires lock internally
-void ui_set_mid_label(const char *text);   // acquires lock internally
-void ui_set_bar_blinking(bool blink);      // start/stop 1s blink
-void ui_set_bar(int value, int min, int max);
+void ui_show_monitor(bool show);               // switch window z-order
+void ui_set_st(const char *text);             // monitor: setpoint label
+void ui_set_rt(const char *text);             // both windows: RT label
+void ui_set_bar(int value, int min, int max); // monitor: progress bar
 ```
 
 ---
