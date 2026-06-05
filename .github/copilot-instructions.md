@@ -74,7 +74,11 @@ observer/sysmon, and GPIO pin defaults.
 ### Formatting
 `.clang-format` is present: LLVM style, 4-space indent, 120-column limit,
 K&R-style braces except functions get their own line. Run `clang-format -i` on
-changed files before committing.
+changed C/H files before committing.
+
+`.cmake-format.py` is present: 4-space indent, 80-column limit. Run
+`cmake-format -i` on any changed `CMakeLists.txt` or `.cmake` files before
+committing.
 
 ### Button callbacks
 `button_init(gpio, on_short_press, on_long_press)` — either callback may be NULL.
