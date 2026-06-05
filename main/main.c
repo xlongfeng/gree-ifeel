@@ -5,6 +5,7 @@
  */
 
 #include "button.h"
+#include "console.h"
 #include "driver/gpio.h"
 #include "gree_ir.h"
 #include "ifeel.h"
@@ -21,6 +22,7 @@
 
 void app_main(void)
 {
+    ESP_ERROR_CHECK(console_init());
     ESP_ERROR_CHECK(ui_init());
     ESP_ERROR_CHECK(led_init(LED_GPIO_NUM));
     ESP_ERROR_CHECK(gree_ir_init(GREE_IR_GPIO_NUM));
