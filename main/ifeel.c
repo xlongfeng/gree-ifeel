@@ -15,8 +15,8 @@
 #define IFEEL_SETPOINT_DEFAULT 27
 #define IFEEL_SETPOINT_MIN 24
 #define IFEEL_SETPOINT_MAX 28
-#define IFEEL_TEMP_HIGH 25.0f          /* decrease setpoint when room > this */
-#define IFEEL_TEMP_LOW 23.5f           /* increase setpoint when room < this */
+#define IFEEL_TEMP_HIGH 25.5f          /* decrease setpoint when room > this */
+#define IFEEL_TEMP_LOW 23.8f           /* increase setpoint when room < this */
 #define IFEEL_MONITOR_INTERVAL_S 300LL /* seconds between adjustments (5 min) */
 
 static const char *TAG = "ifeel";
