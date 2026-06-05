@@ -1,5 +1,4 @@
 dependencies:
   lvgl/lvgl: "9.2.0"
-  esp_lcd_sh1107: "^1"
   espressif/onewire_bus: ">=0.1.0"
   espressif/ds18b20: ">=0.1.0"
