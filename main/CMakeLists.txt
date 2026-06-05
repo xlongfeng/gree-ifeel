@@ -6,7 +6,6 @@ idf_component_register(
     "thermometer.c"
     "gree_ir.c"
     "button.c"
-    "led.c"
     "ifeel.c"
     INCLUDE_DIRS
     "."

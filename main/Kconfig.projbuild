@@ -35,11 +35,4 @@ menu "iFeel GPIO Configuration"
         help
             GPIO number for the light button (toggles AC display light).
 
-    config IFEEL_LED_GPIO
-        int "Status LED GPIO"
-        default 8
-        range 0 21
-        help
-            GPIO number for the status LED (active-low).
-
 endmenu

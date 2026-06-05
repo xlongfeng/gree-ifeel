@@ -9,7 +9,6 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "gree_ir.h"
-#include "led.h"
 #include "ui.h"
 
 #define IFEEL_SETPOINT_DEFAULT 27
@@ -59,7 +58,6 @@ static void enter_on(void)
     s_state = IFEEL_ON;
     s_setpoint = IFEEL_SETPOINT_DEFAULT;
     s_last_monitor_us = esp_timer_get_time();
-    led_on_for(3);
     ac_turn_on();
     ui_set_bar_blinking(false);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
@@ -72,7 +70,6 @@ static void enter_on(void)
 static void enter_off(void)
 {
     s_state = IFEEL_OFF;
-    led_on_for(1);
     ac_turn_off();
     ui_set_bar_blinking(true);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);

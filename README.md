@@ -20,7 +20,6 @@ DS18B20 sensor, adjusts the AC setpoint via IR commands, and shows status on a
 | Power button | Momentary push-button | GPIO 3 (default), pull-up |
 | Temperature button | Momentary push-button | GPIO 4 (default), pull-up |
 | Light button | Momentary push-button | GPIO 10 (default), pull-up |
-| Status LED | Active-low LED | GPIO 8 (default) |
 
 > All GPIO numbers are configurable via `idf.py menuconfig` → **iFeel GPIO Configuration**.
 
@@ -41,7 +40,7 @@ The SSD1315 is command-compatible with SSD1306 but requires:
 ## Modules
 
 ### `main.c` — Entry point
-Initialises all subsystems in order: UI → LED → IR → iFeel → thermometer → buttons.
+Initialises all subsystems in order: console → UI → IR → iFeel → thermometer → buttons.
 
 ### `ifeel.c` — State machine
 Core control logic.
@@ -100,12 +99,6 @@ Interrupt-driven with FreeRTOS task debounce.
 - **Short press**: button released before 1000 ms → `on_short_press` fires on release
 - **Long press**: button still held at 1000 ms → `on_long_press` fires immediately,
   polling exits, waits for physical release before re-arming
-
-### `led.c` — Status LED
-Active-low LED driver with optional auto-off timer (`led_on_for(seconds)`).
-Used for brief visual feedback on state transitions:
-- Power ON → 3s flash
-- Power OFF → 1s flash
 
 ### `ui.c` — Display driver + LVGL UI
 
@@ -172,12 +165,11 @@ CONFIG_LV_USE_THEME_MONO=y
 
 ```
 main.c
+  ├── console.c     (USB Serial JTAG RX drain)
   ├── ui.c          (SSD1315 OLED via I2C + LVGL)
-  ├── led.c         (status LED)
   ├── gree_ir.c     (IR TX via RMT)
   ├── ifeel.c       (state machine)
   │     ├── ui.c   (label / bar updates)
-  │     ├── led.c  (flash on transition)
   │     └── gree_ir.c (send AC commands)
   ├── thermometer.c (DS18B20 via 1-Wire/RMT)
   │     └── ifeel.c (on_temperature callback)
