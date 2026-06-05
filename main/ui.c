@@ -267,6 +267,13 @@ esp_err_t ui_init(void)
     // but this display uses alternating COM pins (0x12), causing every other row to be
     // skipped and content appearing at 2x height. Override with the correct value.
     ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, 0xDA, (uint8_t[]){0x12}, 1));
+    // Brightness control (display still OFF at this point):
+    //   0x81 = contrast (0x00=min … 0xFF=max, default 0x7F)
+    //   0xD9 = pre-charge period (lower nibble = phase1, upper = phase2; default 0x22)
+    //   0xDB = VCOMH deselect level (0x00/0x20/0x30/0x40; default 0x20)
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, 0x81, (uint8_t[]){0x20}, 1));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, 0xD9, (uint8_t[]){0x11}, 1));
+    ESP_ERROR_CHECK(esp_lcd_panel_io_tx_param(io_handle, 0xDB, (uint8_t[]){0x00}, 1));
     ESP_ERROR_CHECK(esp_lcd_panel_set_gap(panel_handle, 28, 0));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
