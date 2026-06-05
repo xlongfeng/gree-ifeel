@@ -1,67 +1,186 @@
-| Supported Targets | ESP32 | ESP32-C2 | ESP32-C3 | ESP32-C5 | ESP32-C6 | ESP32-C61 | ESP32-H2 | ESP32-H21 | ESP32-H4 | ESP32-P4 | ESP32-S2 | ESP32-S3 |
-| ----------------- | ----- | -------- | -------- | -------- | -------- | --------- | -------- | --------- | -------- | -------- | -------- | -------- |
+# GREE iFeel — Design Document
 
-# I2C OLED example
+## Overview
 
-[esp_lcd](https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/peripherals/lcd/i2c_lcd.html) supports I2C interfaced OLED LCD, whose color depth is usually 1bpp.
+**gree-ifeel** is an ESP32-C3 firmware that implements an autonomous room-temperature
+controller for a GREE split air conditioner. It reads the ambient temperature from a
+DS18B20 sensor, adjusts the AC setpoint via IR commands, and shows status on a
+72×40-pixel SSD1315 OLED display.
 
-This example shows how to make use of the SSD1306 panel driver from `esp_lcd` component to facilitate the porting of LVGL library. In the end, example will display a scrolling text on the OLED screen. For more information about porting the LVGL library, you can also refer to another [lvgl porting example](../i80_controller/README.md).
+---
 
-## How to use the example
+## Hardware
 
-### Hardware Required
+| Component | Part | Connection |
+|---|---|---|
+| MCU | ESP32-C3 | — |
+| Temperature sensor | DS18B20 (1-Wire) | GPIO 7 (default) |
+| IR transmitter | 38 kHz IR LED | GPIO 0 (default) |
+| Display | SSD1315 72×40 OLED (I2C) | SDA=GPIO5, SCL=GPIO6 |
+| Power button | Momentary push-button | GPIO 3 (default), pull-up |
+| Temperature button | Momentary push-button | GPIO 4 (default), pull-up |
+| Light button | Momentary push-button | GPIO 10 (default), pull-up |
+| Status LED | Active-low LED | GPIO 8 (default) |
 
-* An ESP development board
-* An SSD1306 OLED LCD, with I2C interface
-* An USB cable for power supply and programming
+> All GPIO numbers are configurable via `idf.py menuconfig` → **iFeel GPIO Configuration**.
 
-### Hardware Connection
+### SSD1315 notes
 
-The connection between ESP Board and the LCD is as follows:
+The SSD1315 is command-compatible with SSD1306 but requires:
+- **COM pins**: `SET_COMPINS (0xDA) = 0x12` (alternating) — the ESP-IDF driver sends
+  `0x02` (sequential) for height ≠ 64, which causes 2× height stretching. Overridden
+  in firmware after `esp_lcd_panel_init()`.
+- **Brightness**: the display must be configured while OFF. Three registers are set
+  together for a visible effect:
+  - `0x81 = 0x20` — contrast
+  - `0xD9 = 0x11` — pre-charge period
+  - `0xDB = 0x00` — VCOMH deselect
 
-```text
-      ESP Board                       OLED LCD (I2C)
-+------------------+              +-------------------+
-|               GND+--------------+GND                |
-|                  |              |                   |
-|               3V3+--------------+VCC                |
-|                  |              |                   |
-|               SDA+--------------+SDA                |
-|                  |              |                   |
-|               SCL+--------------+SCL                |
-+------------------+              +-------------------+
+---
+
+## Modules
+
+### `main.c` — Entry point
+Initialises all subsystems in order: UI → LED → IR → iFeel → thermometer → buttons.
+
+### `ifeel.c` — State machine
+Core control logic.
+
+**States:**
+
+```
+  ┌─────────────────────────────────────────────────────┐
+  │  IFEEL_OFF                                          │
+  │  • AC off                                           │
+  │  • Bar blinks at 1s                                 │
+  │  • Top label: "GREE iFeel"                          │
+  │  • No temperature monitoring                        │
+  └──────────────┬──────────────────────────────────────┘
+                 │ power button (short press)
+  ┌──────────────▼──────────────────────────────────────┐
+  │  IFEEL_ON                                           │
+  │  • AC on (COOL mode, setpoint=27°C default)         │
+  │  • Bar fills over 5-minute monitor window           │
+  │  • Top label: "ST: xx°C"                            │
+  │  • Monitor fires every 5 min → auto-adjust setpoint │
+  └─────────────────────────────────────────────────────┘
 ```
 
-The GPIO number used by this example can be changed in [lvgl_example_main.c](main/i2c_oled_example_main.c). Please pay attention to the I2C hardware device address as well, you should refer to your module's spec and schematic to determine that address.
+**Temperature control (ON state only):**
 
-### Build and Flash
+| Room temperature | Action |
+|---|---|
+| > 25.5°C | Decrease setpoint by 1°C (min 24°C) |
+| < 23.8°C | Increase setpoint by 1°C (max 28°C) |
+| 23.8–25.5°C | No change |
 
-Run `idf.py -p PORT build flash monitor` to build, flash and monitor the project. A scrolling text will show up on the LCD as expected.
+Monitor interval: **300 seconds (5 minutes)**.
 
-The first time you run `idf.py` for the example will cost extra time as the build system needs to address the component dependencies and downloads the missing components from the ESP Component Registry into `managed_components` folder.
+**Buttons:**
 
-(To exit the serial monitor, type ``Ctrl-]``.)
+| Button | Short press | Long press |
+|---|---|---|
+| Power | Toggle OFF ↔ ON | *(unused)* |
+| Temperature | Increment setpoint (24→25→…→28→24, ON only) | *(unused)* |
+| Light | Toggle AC display light (any state) | *(unused)* |
 
-See the [Getting Started Guide](https://docs.espressif.com/projects/esp-idf/en/latest/get-started/index.html) for full steps to configure and use ESP-IDF to build projects.
+### `thermometer.c` — DS18B20 reader
+Spawns a FreeRTOS task that reads temperature every second via 1-Wire/RMT and calls
+`ifeel_on_temperature(float)`.
 
-### Example Output
+### `gree_ir.c` — GREE IR transmitter
+Encodes a `gree_ac_state_t` into the GREE protocol (2 × 8-byte frames, 38 kHz carrier)
+and transmits via RMT. Full state including mode, fan, swing, turbo, sleep, light, etc.
 
-```bash
-...
-I (308) main_task: Started on CPU0
-I (318) main_task: Calling app_main()
-I (318) example: Initialize I2C bus
-I (318) gpio: GPIO[3]| InputEn: 1| OutputEn: 1| OpenDrain: 1| Pullup: 1| Pulldown: 0| Intr:0
-I (328) gpio: GPIO[4]| InputEn: 1| OutputEn: 1| OpenDrain: 1| Pullup: 1| Pulldown: 0| Intr:0
-I (338) example: Install panel IO
-I (338) example: Install SSD1306 panel driver
-I (448) example: Initialize LVGL
-I (448) LVGL: Starting LVGL task
-I (448) example: Display LVGL Scroll Text
-I (448) main_task: Returned from app_main()
-...
+### `button.c` — GPIO button driver
+Interrupt-driven with FreeRTOS task debounce.
+
+- Falling edge → queue event
+- Debounce: 50 ms
+- **Short press**: button released before 1000 ms → `on_short_press` fires on release
+- **Long press**: button still held at 1000 ms → `on_long_press` fires immediately,
+  polling exits, waits for physical release before re-arming
+
+### `led.c` — Status LED
+Active-low LED driver with optional auto-off timer (`led_on_for(seconds)`).
+Used for brief visual feedback on state transitions:
+- Power ON → 3s flash
+- Power OFF → 1s flash
+
+### `ui.c` — Display driver + LVGL UI
+
+#### Display pipeline
+
+```
+LVGL (I1 mono) → lvgl_flush_cb → oled_buffer (page format) → SSD1315 via I2C
 ```
 
-## Troubleshooting
+The flush callback converts LVGL's I1 bitmap (1 bit/pixel, row-major) to the
+SSD1315's page format (8 rows packed vertically per byte, column-major). Color
+inversion: LVGL black → OLED bright pixel; LVGL white → OLED off pixel.
 
-For any technical queries, please open an [issue](https://github.com/espressif/esp-idf/issues) on GitHub. We will get back to you soon.
+#### Screen layout (72 × 40 px)
+
+```
+┌──────────────────────────────────────────────┐ ← y=0
+│     Top label  (12px, Montserrat 12)         │
+│   "GREE iFeel" (OFF) / "ST: xx°C" (ON)       │
+├──────────────────────────────────────────────┤ ← y=12  (1px gap)
+│                                              │
+│     Mid label  (16px, Montserrat 12)         │
+│         "RT: xx.x°C"                         │
+│                                              │
+├──────────────────────────────────────────────┤ ← y=29  (1px gap)
+│         Progress bar  (10px, full width)     │
+│   blinks 1s when OFF / fills when ON         │
+└──────────────────────────────────────────────┘ ← y=40
+```
+
+#### LVGL configuration
+
+- Color format: `LV_COLOR_FORMAT_I1`
+- Theme: `lv_theme_mono` (`dark_bg=false`)
+- Draw buffer: `72×40/8 + 8 = 368` bytes (full-screen, single buffer)
+- LVGL tick: 5 ms periodic esp_timer
+- LVGL task: priority 2, guarded by `_lock_t lvgl_api_lock`
+
+#### Public API (`ui.h`)
+
+```c
+esp_err_t ui_init(void);
+void ui_set_top_label(const char *text);   // acquires lock internally
+void ui_set_mid_label(const char *text);   // acquires lock internally
+void ui_set_bar_blinking(bool blink);      // start/stop 1s blink
+void ui_set_bar(int value, int min, int max);
+```
+
+---
+
+## Build configuration (`sdkconfig.defaults`)
+
+```
+CONFIG_LV_CONF_SKIP=y
+CONFIG_LV_USE_OBSERVER=y
+CONFIG_LV_USE_SYSMON=y
+CONFIG_LV_FONT_MONTSERRAT_12=y
+CONFIG_LV_USE_THEME_MONO=y
+```
+
+---
+
+## Module dependency diagram
+
+```
+main.c
+  ├── ui.c          (SSD1315 OLED via I2C + LVGL)
+  ├── led.c         (status LED)
+  ├── gree_ir.c     (IR TX via RMT)
+  ├── ifeel.c       (state machine)
+  │     ├── ui.c   (label / bar updates)
+  │     ├── led.c  (flash on transition)
+  │     └── gree_ir.c (send AC commands)
+  ├── thermometer.c (DS18B20 via 1-Wire/RMT)
+  │     └── ifeel.c (on_temperature callback)
+  └── button.c      (GPIO interrupt + debounce)
+        └── ifeel.c (button callbacks)
+```
