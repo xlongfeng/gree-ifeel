@@ -15,16 +15,23 @@ extern "C" {
 typedef void (*button_cb_t)(void);
 
 /**
- * @brief Initialize a GPIO button with interrupt-driven debounce.
+ * @brief Initialize a GPIO button with short and long press support.
  *
  * The GPIO is configured as input with internal pull-up. A falling-edge
  * interrupt feeds a FreeRTOS queue; a background task debounces presses
- * (50 ms window) and invokes @p on_press.
+ * and classifies them:
+ *   - Short press: released before BUTTON_LONG_PRESS_MS (1000 ms) →
+ *     @p on_short_press is called on release.
+ *   - Long press: held for BUTTON_LONG_PRESS_MS → @p on_long_press is
+ *     called immediately at the threshold (not on release).
  *
- * @param gpio_num  GPIO number (e.g. GPIO_NUM_1)
- * @param on_press  Callback invoked from the button task on each confirmed press
+ * Either callback may be NULL if not needed.
+ *
+ * @param gpio_num       GPIO number
+ * @param on_short_press Callback for short press (may be NULL)
+ * @param on_long_press  Callback for long press (may be NULL)
  */
-esp_err_t button_init(int gpio_num, button_cb_t on_press);
+esp_err_t button_init(int gpio_num, button_cb_t on_short_press, button_cb_t on_long_press);
 
 #ifdef __cplusplus
 }
