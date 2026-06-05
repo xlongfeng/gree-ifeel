@@ -61,7 +61,7 @@ static void enter_on(void)
     s_last_monitor_us = esp_timer_get_time();
     led_on_for(3);
     ac_turn_on();
-    ui_set_led_indicator(true);
+    ui_set_bar_blinking(false);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
     char buf[16];
     snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
@@ -74,7 +74,7 @@ static void enter_off(void)
     s_state = IFEEL_OFF;
     led_on_for(1);
     ac_turn_off();
-    ui_set_led_indicator(false);
+    ui_set_bar_blinking(true);
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
     ui_set_top_label("Gree iFeel");
     ESP_LOGI(TAG, "State → OFF");

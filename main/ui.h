@@ -34,11 +34,14 @@ void ui_set_mid_label(const char *text);
 
 /* ── Lower area ──────────────────────────────────────────────────────────── */
 
-/** @brief Set the LED indicator state (right side of bottom area, blinks at 1s when on). */
-void ui_set_led_indicator(bool on);
+/**
+ * @brief Start or stop bar blinking at 1s intervals.
+ *        Call with true on iFeel OFF, false on iFeel ON.
+ */
+void ui_set_bar_blinking(bool blink);
 
 /**
- * @brief Set the progress bar value (left side of bottom area, 50px wide).
+ * @brief Set the progress bar value (full-width bottom area).
  * @param value  Current value
  * @param min    Minimum value
  * @param max    Maximum value

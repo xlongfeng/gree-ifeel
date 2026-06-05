@@ -57,19 +57,14 @@ static _lock_t lvgl_api_lock;
 #define UI_MID_Y (UI_TOP_H + UI_GAP)
 #define UI_BOT_Y (UI_TOP_H + UI_GAP + UI_MID_H + UI_GAP)
 
-#define UI_BAR_W 50
-#define UI_LED_W (SSD1306_LCD_H_RES - UI_BAR_W) /* 22 */
-
 #define UI_BLINK_INTERVAL_US 1000000ULL /* 1 s */
 
 static lv_obj_t *s_top_label = NULL;
 static lv_obj_t *s_mid_label = NULL;
 
-static lv_obj_t *s_led_indicator = NULL;
 static lv_obj_t *s_bar = NULL;
-static esp_timer_handle_t s_led_blink_timer = NULL;
-static bool s_led_on = false;
-static bool s_led_blink_state = false;
+static esp_timer_handle_t s_bar_blink_timer = NULL;
+static bool s_bar_blink_state = false;
 
 /* ── LVGL port callbacks ─────────────────────────────────────────────────── */
 
@@ -127,13 +122,17 @@ static void lvgl_port_task(void *arg)
 /* ── Label cycle helpers ─────────────────────────────────────────────────── */
 
 /* Advance to the next non-hidden label and update LVGL visibility. */
-/* ── LED blink helper ────────────────────────────────────────────────────── */
+/* ── Bar blink helper ────────────────────────────────────────────────────── */
 
-static void led_blink_cb(void *arg)
+static void bar_blink_cb(void *arg)
 {
     _lock_acquire(&lvgl_api_lock);
-    s_led_blink_state = !s_led_blink_state;
-    lv_obj_set_style_bg_opa(s_led_indicator, s_led_blink_state ? LV_OPA_COVER : LV_OPA_TRANSP, 0);
+    s_bar_blink_state = !s_bar_blink_state;
+    if (s_bar_blink_state) {
+        lv_obj_remove_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
+    }
     _lock_release(&lvgl_api_lock);
 }
 
@@ -187,39 +186,30 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_set_size(bot, SSD1306_LCD_H_RES, UI_BOT_H);
     container_style(bot);
 
-    /* Bar (left, 50px) */
+    /* Bar — full width */
     s_bar = lv_bar_create(bot);
-    lv_obj_set_size(s_bar, UI_BAR_W - 2, UI_BOT_H - 2);
-    lv_obj_align(s_bar, LV_ALIGN_LEFT_MID, 1, 0);
+    lv_obj_set_size(s_bar, SSD1306_LCD_H_RES - 2, UI_BOT_H - 2);
+    lv_obj_align(s_bar, LV_ALIGN_CENTER, 0, 0);
     lv_bar_set_range(s_bar, 0, 100);
     lv_bar_set_value(s_bar, 0, LV_ANIM_OFF);
     /* Explicit monochrome bar styles: transparent bg with bright border, bright indicator */
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_TRANSP, LV_PART_MAIN);
     lv_obj_set_style_border_width(s_bar, 1, LV_PART_MAIN);
-    lv_obj_set_style_border_color(s_bar, lv_color_black(), LV_PART_MAIN); /* black → OLED ON */
+    lv_obj_set_style_border_color(s_bar, lv_color_black(), LV_PART_MAIN);
     lv_obj_set_style_radius(s_bar, 0, LV_PART_MAIN);
     lv_obj_set_style_pad_all(s_bar, 0, LV_PART_MAIN);
     lv_obj_set_style_bg_opa(s_bar, LV_OPA_COVER, LV_PART_INDICATOR);
-    lv_obj_set_style_bg_color(s_bar, lv_color_black(), LV_PART_INDICATOR); /* black → OLED ON */
+    lv_obj_set_style_bg_color(s_bar, lv_color_black(), LV_PART_INDICATOR);
     lv_obj_set_style_radius(s_bar, 0, LV_PART_INDICATOR);
 
-    /* LED indicator (right, circular — 8×8 centred in the right portion) */
-    s_led_indicator = lv_obj_create(bot);
-    lv_obj_set_size(s_led_indicator, UI_BOT_H - 2, UI_BOT_H - 2); /* square for circle */
-    lv_obj_align(s_led_indicator, LV_ALIGN_RIGHT_MID, -1, 0);
-    lv_obj_set_style_pad_all(s_led_indicator, 0, 0);
-    lv_obj_set_style_border_width(s_led_indicator, 1, 0);
-    lv_obj_set_style_radius(s_led_indicator, LV_RADIUS_CIRCLE, 0);
-    /* black → OLED ON (bright); initially solid (OFF state = static solid) */
-    lv_obj_set_style_bg_color(s_led_indicator, lv_color_black(), 0);
-    lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
-
-    /* Create LED blink timer (not started yet) */
+    /* Bar blink timer — starts immediately (OFF state = blinking) */
     esp_timer_create_args_t blink_args = {
-        .callback = led_blink_cb,
-        .name = "ui_led_blink",
+        .callback = bar_blink_cb,
+        .name = "ui_bar_blink",
     };
-    esp_timer_create(&blink_args, &s_led_blink_timer);
+    esp_timer_create(&blink_args, &s_bar_blink_timer);
+    s_bar_blink_state = true;
+    esp_timer_start_periodic(s_bar_blink_timer, UI_BLINK_INTERVAL_US);
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -331,25 +321,20 @@ void ui_set_mid_label(const char *text)
     _lock_release(&lvgl_api_lock);
 }
 
-void ui_set_led_indicator(bool on)
+void ui_set_bar_blinking(bool blink)
 {
-    if (!s_led_indicator || !s_led_blink_timer)
+    if (!s_bar || !s_bar_blink_timer)
         return;
-    s_led_on = on;
-    if (on) {
-        /* ON: blink */
-        s_led_blink_state = true;
-        _lock_acquire(&lvgl_api_lock);
-        lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
-        _lock_release(&lvgl_api_lock);
-        esp_timer_stop(s_led_blink_timer);
-        esp_timer_start_periodic(s_led_blink_timer, UI_BLINK_INTERVAL_US);
+    if (blink) {
+        s_bar_blink_state = true;
+        esp_timer_stop(s_bar_blink_timer);
+        esp_timer_start_periodic(s_bar_blink_timer, UI_BLINK_INTERVAL_US);
     } else {
-        /* OFF: static solid */
-        esp_timer_stop(s_led_blink_timer);
-        s_led_blink_state = false;
+        esp_timer_stop(s_bar_blink_timer);
+        s_bar_blink_state = false;
+        /* Ensure bar is visible when blinking stops */
         _lock_acquire(&lvgl_api_lock);
-        lv_obj_set_style_bg_opa(s_led_indicator, LV_OPA_COVER, 0);
+        lv_obj_remove_flag(s_bar, LV_OBJ_FLAG_HIDDEN);
         _lock_release(&lvgl_api_lock);
     }
 }
