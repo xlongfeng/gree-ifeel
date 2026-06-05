@@ -151,7 +151,7 @@ static void lvgl_create_ui(lv_display_t *disp)
     /* Use the mono theme for correct monochrome rendering.
      * dark_bg=false: LVGL background=white → OLED OFF → physical dark screen,
      * foreground=black → OLED ON → physical bright elements (normal OLED look). */
-    lv_theme_mono_init(disp, false, &lv_font_montserrat_14);
+    lv_theme_mono_init(disp, false, &lv_font_montserrat_12);
 
     lv_obj_t *scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_pad_all(scr, 0, 0);
