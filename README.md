@@ -69,9 +69,9 @@ Core control logic.
 
 | Room temperature | Action |
 |---|---|
-| > 25.5°C | Decrease setpoint by 1°C (min 24°C) |
-| < 23.8°C | Increase setpoint by 1°C (max 28°C) |
-| 23.8–25.5°C | No change |
+| > 25.6°C | Decrease setpoint by 1°C (min 24°C) |
+| < 24.0°C | Increase setpoint by 1°C (max 28°C) |
+| 24.0–25.6°C | No change |
 
 Monitor interval: **300 seconds (5 minutes)**.
 
@@ -80,7 +80,7 @@ Monitor interval: **300 seconds (5 minutes)**.
 | Button | Short press | Long press |
 |---|---|---|
 | Power | Toggle OFF ↔ ON | *(unused)* |
-| Temperature | Increment setpoint (24→25→…→28→24, ON only) | *(unused)* |
+| Temperature | Increment setpoint (24→25→…→28→24, ON only); cycle limit index when limit window visible | Show/hide limit config window |
 | Light | Toggle AC display light (any state) | *(unused)* |
 
 ### `thermometer.c` — DS18B20 reader
@@ -114,7 +114,7 @@ inversion: LVGL black → OLED bright pixel; LVGL white → OLED off pixel.
 
 #### Screen layout (72 × 40 px)
 
-Two full-screen windows stacked; z-order switches on state change.
+Two full-screen windows stacked; z-order switches on state change. A third limit config window can be overlaid on either.
 
 **Main window** (foreground when OFF):
 ```
@@ -127,11 +127,21 @@ Two full-screen windows stacked; z-order switches on state change.
 **Monitor window** (foreground when ON):
 ```
 ┌──────────────────────────────────────────────┐
-│  ST: xx°C                                    │
+│  ST: xx.0°C                                  │
 │  RT: xx.x°C                                  │
 │  ████████░░░░░░░░░░  (progress bar)           │
 └──────────────────────────────────────────────┘
 ```
+
+**Limit config window** (brought to front on temp long press; auto-hides after 8 s):
+```
+┌──────────────────────────────────────────────┐
+│  HT: xx.x°C                                  │
+│  LT: xx.x°C                                  │
+└──────────────────────────────────────────────┘
+```
+
+Limit range: LOW 23.4–24.4°C, HIGH 25.0–26.0°C, 6 steps × 0.2°C stride, default index 3 ([24.0, 25.6]°C).
 
 #### LVGL configuration
 
@@ -149,6 +159,9 @@ void ui_show_monitor(bool show);               // switch window z-order
 void ui_set_st(const char *text);             // monitor: setpoint label
 void ui_set_rt(const char *text);             // both windows: RT label
 void ui_set_bar(int value, int min, int max); // monitor: progress bar
+void ui_show_limit(bool show);                // overlay limit config window
+void ui_set_ht(const char *text);             // limit: high-temp label
+void ui_set_lt(const char *text);             // limit: low-temp label
 ```
 
 ---

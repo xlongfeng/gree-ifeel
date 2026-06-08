@@ -58,6 +58,10 @@ static lv_obj_t *s_monitor_st_label = NULL;
 static lv_obj_t *s_monitor_rt_label = NULL;
 static lv_obj_t *s_bar = NULL;
 
+/* Limit window widgets (brought to front for limit config) */
+static lv_obj_t *s_limit_win = NULL;
+static lv_obj_t *s_ht_label = NULL;
+static lv_obj_t *s_lt_label = NULL;
 
 /* ── LVGL port callbacks ─────────────────────────────────────────────────── */
 
@@ -147,7 +151,14 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_t *scr = lv_display_get_screen_active(disp);
     lv_obj_set_style_pad_all(scr, 0, 0);
 
-    /* Monitor window — created first so it sits behind main by default */
+    /* Limit window — created first, sits behind all other windows */
+    s_limit_win = lv_obj_create(scr);
+    win_style(s_limit_win);
+    lv_obj_set_flex_flow(s_limit_win, LV_FLEX_FLOW_COLUMN);
+    s_ht_label = make_label(s_limit_win, "HT: --.-\xC2\xB0\x43");
+    s_lt_label = make_label(s_limit_win, "LT: --.-\xC2\xB0\x43");
+
+    /* Monitor window — created second, behind main by default */
     s_monitor_win = lv_obj_create(scr);
     win_style(s_monitor_win);
     lv_obj_set_flex_flow(s_monitor_win, LV_FLEX_FLOW_COLUMN);
@@ -264,6 +275,37 @@ esp_err_t ui_init(void)
     _lock_release(&lvgl_api_lock);
 
     return ESP_OK;
+}
+
+void ui_show_limit(bool show)
+{
+    if (!s_limit_win)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    if (show) {
+        lv_obj_move_foreground(s_limit_win);
+    } else {
+        lv_obj_move_background(s_limit_win);
+    }
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_set_ht(const char *text)
+{
+    if (!s_ht_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_ht_label, text);
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_set_lt(const char *text)
+{
+    if (!s_lt_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_lt_label, text);
+    _lock_release(&lvgl_api_lock);
 }
 
 void ui_show_monitor(bool show)

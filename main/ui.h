@@ -26,6 +26,21 @@ esp_err_t ui_init(void);
 void ui_show_monitor(bool show);
 
 /**
+ * @brief Bring or send the limit-config window to/from the foreground.
+ */
+void ui_show_limit(bool show);
+
+/**
+ * @brief Set the high-limit label in the limit window (e.g. "HT: 25.6°C").
+ */
+void ui_set_ht(const char *text);
+
+/**
+ * @brief Set the low-limit label in the limit window (e.g. "LT: 23.6°C").
+ */
+void ui_set_lt(const char *text);
+
+/**
  * @brief Set the setpoint label in the monitor window.
  */
 void ui_set_st(const char *text);

@@ -20,6 +20,6 @@ void app_main(void)
     ESP_ERROR_CHECK(ifeel_init());
     ESP_ERROR_CHECK(thermometer_init(DS18B20_GPIO_NUM, ifeel_on_temperature));
     ESP_ERROR_CHECK(button_init(POWER_BUTTON_GPIO_NUM, ifeel_button_pressed, NULL));
-    ESP_ERROR_CHECK(button_init(TEMP_BUTTON_GPIO_NUM, ifeel_temperature_pressed, NULL));
-    ESP_ERROR_CHECK(button_init(LIGHT_BUTTON_GPIO_NUM, ifeel_light_pressed, NULL));
+    ESP_ERROR_CHECK(button_init(TEMP_BUTTON_GPIO_NUM, ifeel_temperature_pressed, ifeel_temperature_long_pressed));
+    ESP_ERROR_CHECK(button_init(LIGHT_BUTTON_GPIO_NUM, ifeel_light_pressed, ifeel_light_long_pressed));
 }
