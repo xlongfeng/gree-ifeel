@@ -39,6 +39,8 @@ static bool s_light = false;
 static int64_t s_last_monitor_us = 0;
 
 static int s_limit_index = LIMIT_INDEX_DEFAULT;
+static bool s_limit_pushed = false;  /* true while handler_limit is on the stack */
+static bool s_monitor_pushed = false; /* true while handler_monitor is on the stack */
 static esp_timer_handle_t s_limit_timer = NULL;
 
 static float limit_low(void) { return LIMIT_LOW_BASE + s_limit_index * LIMIT_STRIDE; }
@@ -54,8 +56,6 @@ static void limit_update_ui(void)
     ui_set_ht(ht);
     ui_set_lt(lt);
 }
-
-static void limit_timer_cb(void *arg);  /* forward declaration */
 
 /* ── AC helpers ───────────────────────────────────────────────────────────── */
 
@@ -93,6 +93,9 @@ static void handler_limit(button_event_t ev);
 
 static void limit_show(void)
 {
+    if (s_limit_pushed)
+        return;
+    s_limit_pushed = true;
     limit_update_ui();
     ui_show_limit(true);
     esp_timer_stop(s_limit_timer);
@@ -103,6 +106,9 @@ static void limit_show(void)
 
 static void limit_hide(void)
 {
+    if (!s_limit_pushed)
+        return;
+    s_limit_pushed = false;
     esp_timer_stop(s_limit_timer);
     ui_show_limit(false);
     button_pop_dispatch();
@@ -111,13 +117,15 @@ static void limit_hide(void)
 
 static void limit_timer_cb(void *arg)
 {
-    ui_show_limit(false);
-    button_pop_dispatch();
+    limit_hide();
     ESP_LOGI(TAG, "Limit window auto-hidden");
 }
 
 static void enter_on(void)
 {
+    if (s_monitor_pushed)
+        return;
+    s_monitor_pushed = true;
     s_state = IFEEL_ON;
     s_setpoint = IFEEL_SETPOINT_DEFAULT;
     s_last_monitor_us = esp_timer_get_time();
@@ -133,6 +141,9 @@ static void enter_on(void)
 
 static void enter_off(void)
 {
+    if (!s_monitor_pushed)
+        return;
+    s_monitor_pushed = false;
     s_state = IFEEL_OFF;
     ac_turn_off();
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);

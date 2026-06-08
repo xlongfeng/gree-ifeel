@@ -5,6 +5,7 @@
  */
 
 #include "button.h"
+#include "assert.h"
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
@@ -116,18 +117,12 @@ esp_err_t button_init(int gpio_num)
 
 void button_push_dispatch(button_dispatch_fn_t fn)
 {
-    if (s_dispatch_top < DISPATCH_STACK_MAX) {
-        s_dispatch_stack[s_dispatch_top++] = fn;
-    } else {
-        ESP_LOGW(TAG, "Dispatch stack full, ignoring push");
-    }
+    assert(s_dispatch_top < DISPATCH_STACK_MAX && "Dispatch stack overflow");
+    s_dispatch_stack[s_dispatch_top++] = fn;
 }
 
 void button_pop_dispatch(void)
 {
-    if (s_dispatch_top > 0) {
-        s_dispatch_top--;
-    } else {
-        ESP_LOGW(TAG, "Dispatch stack empty, ignoring pop");
-    }
+    assert(s_dispatch_top > 0 && "Dispatch stack underflow");
+    s_dispatch_top--;
 }
