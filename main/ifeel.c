@@ -144,11 +144,11 @@ static void enter_off(void)
 /* Main window handler (OFF state) */
 static void handler_main(button_event_t ev)
 {
-    if (ev.gpio_num == F1_GPIO && !ev.long_press) {
+    if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
         enter_on();
-    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_show();
-    } else if (ev.gpio_num == F3_GPIO && !ev.long_press) {
+    } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
         s_light = !s_light;
         ESP_LOGI(TAG, "F3: light → %d", s_light);
         gree_ac_state_t ac = {
@@ -165,18 +165,18 @@ static void handler_main(button_event_t ev)
 /* Monitor window handler (ON state) */
 static void handler_monitor(button_event_t ev)
 {
-    if (ev.gpio_num == F1_GPIO && !ev.long_press) {
+    if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
         enter_off();
-    } else if (ev.gpio_num == F2_GPIO && !ev.long_press) {
+    } else if (is_button(ev, F2_GPIO) && is_short_pressed(ev)) {
         s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
         ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
         char buf[16];
         snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
         ui_set_st(buf);
         ac_turn_on();
-    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_show();
-    } else if (ev.gpio_num == F3_GPIO && !ev.long_press) {
+    } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
         s_light = !s_light;
         ESP_LOGI(TAG, "F3: light → %d", s_light);
         gree_ac_state_t ac = {
@@ -193,14 +193,14 @@ static void handler_monitor(button_event_t ev)
 /* Limit config window handler */
 static void handler_limit(button_event_t ev)
 {
-    if (ev.gpio_num == F2_GPIO && !ev.long_press) {
+    if (is_button(ev, F2_GPIO) && is_short_pressed(ev)) {
         s_limit_index = (s_limit_index + 1) % LIMIT_STEPS;
         limit_update_ui();
         esp_timer_stop(s_limit_timer);
         esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
         ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f",
                  s_limit_index, limit_low(), limit_high());
-    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_hide();
     }
     /* All other buttons ignored in limit window */

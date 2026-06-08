@@ -59,6 +59,30 @@ void button_push_dispatch(button_dispatch_fn_t fn);
  */
 void button_pop_dispatch(void);
 
+/**
+ * @brief Return true if the event is from the given GPIO button.
+ */
+static inline bool is_button(button_event_t ev, int gpio_num)
+{
+    return ev.gpio_num == gpio_num;
+}
+
+/**
+ * @brief Return true if the event is a short press.
+ */
+static inline bool is_short_pressed(button_event_t ev)
+{
+    return !ev.long_press;
+}
+
+/**
+ * @brief Return true if the event is a long press.
+ */
+static inline bool is_long_pressed(button_event_t ev)
+{
+    return ev.long_press;
+}
+
 #ifdef __cplusplus
 }
 #endif
