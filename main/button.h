@@ -7,31 +7,57 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-typedef void (*button_cb_t)(void);
+/**
+ * @brief A button event describing which GPIO fired and the press type.
+ */
+typedef struct {
+    int gpio_num;   /**< GPIO number of the button */
+    bool long_press; /**< true = long press, false = short press */
+} button_event_t;
 
 /**
- * @brief Initialize a GPIO button with short and long press support.
+ * @brief Dispatch function type called for every button event.
+ */
+typedef void (*button_dispatch_fn_t)(button_event_t event);
+
+/**
+ * @brief Initialize a GPIO button.
  *
  * The GPIO is configured as input with internal pull-up. A falling-edge
  * interrupt feeds a FreeRTOS queue; a background task debounces presses
  * and classifies them:
- *   - Short press: released before BUTTON_LONG_PRESS_MS (1000 ms) →
- *     @p on_short_press is called on release.
- *   - Long press: held for BUTTON_LONG_PRESS_MS → @p on_long_press is
- *     called immediately at the threshold (not on release).
+ *   - Short press: released before BUTTON_LONG_PRESS_MS (1000 ms)
+ *   - Long press: held for BUTTON_LONG_PRESS_MS — fires immediately at threshold
  *
- * Either callback may be NULL if not needed.
+ * Events are delivered via the dispatch function set with button_set_dispatch().
  *
- * @param gpio_num       GPIO number
- * @param on_short_press Callback for short press (may be NULL)
- * @param on_long_press  Callback for long press (may be NULL)
+ * @param gpio_num  GPIO number
  */
-esp_err_t button_init(int gpio_num, button_cb_t on_short_press, button_cb_t on_long_press);
+esp_err_t button_init(int gpio_num);
+
+/**
+ * @brief Push a dispatch function onto the handler stack.
+ *
+ * The pushed function becomes the active handler immediately.
+ * Use when a new window is shown.
+ *
+ * @param fn  Dispatch function (must not be NULL)
+ */
+void button_push_dispatch(button_dispatch_fn_t fn);
+
+/**
+ * @brief Pop the top dispatch function from the handler stack.
+ *
+ * The previous handler becomes active. Has no effect if the stack is empty.
+ * Use when a window is dismissed.
+ */
+void button_pop_dispatch(void);
 
 #ifdef __cplusplus
 }

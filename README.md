@@ -17,9 +17,9 @@ DS18B20 sensor, adjusts the AC setpoint via IR commands, and shows status on a
 | Temperature sensor | DS18B20 (1-Wire) | GPIO 7 (default) |
 | IR transmitter | 38 kHz IR LED | GPIO 0 (default) |
 | Display | SSD1315 72×40 OLED (I2C) | SDA=GPIO5, SCL=GPIO6 |
-| Power button | Momentary push-button | GPIO 3 (default), pull-up |
-| Temperature button | Momentary push-button | GPIO 4 (default), pull-up |
-| Light button | Momentary push-button | GPIO 10 (default), pull-up |
+| F1 button | Momentary push-button | GPIO 3 (default), pull-up |
+| F2 button | Momentary push-button | GPIO 4 (default), pull-up |
+| F3 button | Momentary push-button | GPIO 10 (default), pull-up |
 
 > All GPIO numbers are configurable via `idf.py menuconfig` → **iFeel GPIO Configuration**.
 
@@ -55,7 +55,7 @@ Core control logic.
   │  • Top label: "GREE iFeel"                          │
   │  • No temperature monitoring                        │
   └──────────────┬──────────────────────────────────────┘
-                 │ power button (short press)
+                 │ F1 button (short press)
   ┌──────────────▼──────────────────────────────────────┐
   │  IFEEL_ON                                           │
   │  • AC on (COOL mode, setpoint=27°C default)         │
@@ -79,9 +79,9 @@ Monitor interval: **300 seconds (5 minutes)**.
 
 | Button | Short press | Long press |
 |---|---|---|
-| Power | Toggle OFF ↔ ON | *(unused)* |
-| Temperature | Increment setpoint (24→25→…→28→24, ON only); cycle limit index when limit window visible | Show/hide limit config window |
-| Light | Toggle AC display light (any state) | *(unused)* |
+| F1 | Toggle OFF ↔ ON | *(unused)* |
+| F2 | Increment setpoint (24→25→…→28→24, ON only); cycle limit index when limit window visible | Show/hide limit config window |
+| F3 | Toggle AC display light (any state) | *(unused)* |
 
 ### `thermometer.c` — DS18B20 reader
 Spawns a FreeRTOS task that reads temperature every second via 1-Wire/RMT and calls
@@ -92,12 +92,13 @@ Encodes a `gree_ac_state_t` into the GREE protocol (2 × 8-byte frames, 38 kHz c
 and transmits via RMT. Full state including mode, fan, swing, turbo, sleep, light, etc.
 
 ### `button.c` — GPIO button driver
-Interrupt-driven with FreeRTOS task debounce.
+Interrupt-driven with FreeRTOS task debounce. Events are dispatched to the
+active window handler via `button_set_dispatch()`.
 
 - Falling edge → queue event
 - Debounce: 50 ms
-- **Short press**: button released before 1000 ms → `on_short_press` fires on release
-- **Long press**: button still held at 1000 ms → `on_long_press` fires immediately,
+- **Short press**: button released before 1000 ms → dispatch with `long_press=false`
+- **Long press**: button still held at 1000 ms → dispatch with `long_press=true` immediately,
   polling exits, waits for physical release before re-arming
 
 ### `ui.c` — Display driver + LVGL UI

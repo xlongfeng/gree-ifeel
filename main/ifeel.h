@@ -7,6 +7,7 @@
 #pragma once
 
 #include "esp_err.h"
+#include <stdint.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -19,43 +20,9 @@ typedef enum {
 
 /**
  * @brief Initialize the iFeel module (state = OFF, AC untouched).
+ *        Installs the initial button dispatch handler.
  */
 esp_err_t ifeel_init(void);
-
-/**
- * @brief Handle a button press. Transitions:
- *   OFF → ON
- *   ON  → OFF
- */
-void ifeel_button_pressed(void);
-
-/**
- * @brief Handle the temperature button press.
- *
- * Normal: only active in ON state — increments setpoint, wraps, resends AC command.
- * When limit window visible: cycles limit index up (wraps), restarts 3s auto-hide timer.
- */
-void ifeel_temperature_pressed(void);
-
-/**
- * @brief Handle the temperature button long press.
- *        No-op in all states (registered for completeness).
- */
-void ifeel_temperature_long_pressed(void);
-
-/**
- * @brief Handle the light button press.
- *
- * Toggles the AC display light and resends the IR command.
- * Ignored when the limit-config window is visible.
- */
-void ifeel_light_pressed(void);
-
-/**
- * @brief Handle the light button long press.
- *        Shows the limit-config window; hides it if already visible.
- */
-void ifeel_light_long_pressed(void);
 
 /**
  * @brief Feed the latest room temperature reading.

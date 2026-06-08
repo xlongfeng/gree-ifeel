@@ -14,25 +14,25 @@ menu "iFeel GPIO Configuration"
         help
             GPIO number for the IR LED (GREE AC transmitter).
 
-    config IFEEL_POWER_BUTTON_GPIO
-        int "Power button GPIO"
+    config IFEEL_F1_BUTTON_GPIO
+        int "F1 button GPIO"
         default 3
         range 0 21
         help
-            GPIO number for the power button (toggles AC on/off).
+            GPIO number for the F1 button (toggles AC on/off).
 
-    config IFEEL_TEMP_BUTTON_GPIO
-        int "Temperature button GPIO"
+    config IFEEL_F2_BUTTON_GPIO
+        int "F2 button GPIO"
         default 4
         range 0 21
         help
-            GPIO number for the temperature button (adjusts AC setpoint).
+            GPIO number for the F2 button (adjusts AC setpoint / limit config).
 
-    config IFEEL_LIGHT_BUTTON_GPIO
-        int "Light button GPIO"
+    config IFEEL_F3_BUTTON_GPIO
+        int "F3 button GPIO"
         default 10
         range 0 21
         help
-            GPIO number for the light button (toggles AC display light).
+            GPIO number for the F3 button (toggles AC display light).
 
 endmenu

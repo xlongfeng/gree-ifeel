@@ -18,30 +18,18 @@
 
 static const char *TAG = "button";
 
-typedef struct {
-    int gpio_num;
-    button_cb_t on_short_press;
-    button_cb_t on_long_press;
-} button_entry_t;
-
-static button_entry_t s_buttons[BUTTON_MAX];
+static int s_gpios[BUTTON_MAX];
 static int s_button_count = 0;
 static QueueHandle_t s_evt_queue;
+#define DISPATCH_STACK_MAX 4
+
+static button_dispatch_fn_t s_dispatch_stack[DISPATCH_STACK_MAX];
+static int s_dispatch_top = 0;
 
 static void IRAM_ATTR gpio_isr_handler(void *arg)
 {
     uint32_t gpio_num = (uint32_t)arg;
     xQueueSendFromISR(s_evt_queue, &gpio_num, NULL);
-}
-
-static button_entry_t *find_button(int gpio_num)
-{
-    for (int i = 0; i < s_button_count; i++) {
-        if (s_buttons[i].gpio_num == gpio_num) {
-            return &s_buttons[i];
-        }
-    }
-    return NULL;
 }
 
 static void button_task(void *arg)
@@ -52,7 +40,6 @@ static void button_task(void *arg)
             /* Debounce: wait, then confirm pin is still low */
             vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));
             if (gpio_get_level(gpio_num) == 0) {
-                button_entry_t *btn = find_button((int)gpio_num);
                 bool long_fired = false;
                 int held_ms = 0;
 
@@ -63,17 +50,19 @@ static void button_task(void *arg)
                     if (!long_fired && held_ms >= BUTTON_LONG_PRESS_MS) {
                         long_fired = true;
                         ESP_LOGI(TAG, "Long press on GPIO%lu", gpio_num);
-                        if (btn && btn->on_long_press) {
-                            btn->on_long_press();
+                        if (s_dispatch_top > 0) {
+                            button_event_t ev = {.gpio_num = (int)gpio_num, .long_press = true};
+                            s_dispatch_stack[s_dispatch_top - 1](ev);
                         }
-                        break; /* stop polling after long press fires */
+                        break;
                     }
                 }
 
                 if (!long_fired) {
                     ESP_LOGI(TAG, "Short press on GPIO%lu", gpio_num);
-                    if (btn && btn->on_short_press) {
-                        btn->on_short_press();
+                    if (s_dispatch_top > 0) {
+                        button_event_t ev = {.gpio_num = (int)gpio_num, .long_press = false};
+                        s_dispatch_stack[s_dispatch_top - 1](ev);
                     }
                 } else {
                     /* Wait for physical release before re-arming */
@@ -92,7 +81,7 @@ static void button_task(void *arg)
     }
 }
 
-esp_err_t button_init(int gpio_num, button_cb_t on_short_press, button_cb_t on_long_press)
+esp_err_t button_init(int gpio_num)
 {
     if (s_button_count >= BUTTON_MAX) {
         ESP_LOGE(TAG, "Max buttons (%d) reached", BUTTON_MAX);
@@ -115,14 +104,30 @@ esp_err_t button_init(int gpio_num, button_cb_t on_short_press, button_cb_t on_l
     };
     ESP_RETURN_ON_ERROR(gpio_config(&io_conf), TAG, "gpio_config failed");
 
-    ESP_RETURN_ON_ERROR(gpio_isr_handler_add(gpio_num, gpio_isr_handler, (void *)(intptr_t)gpio_num), TAG,
-                        "isr_handler_add failed");
+    ESP_RETURN_ON_ERROR(
+        gpio_isr_handler_add(gpio_num, gpio_isr_handler, (void *)(intptr_t)gpio_num), TAG,
+        "isr_handler_add failed");
 
-    s_buttons[s_button_count].gpio_num = gpio_num;
-    s_buttons[s_button_count].on_short_press = on_short_press;
-    s_buttons[s_button_count].on_long_press = on_long_press;
-    s_button_count++;
+    s_gpios[s_button_count++] = gpio_num;
 
     ESP_LOGI(TAG, "Button initialized on GPIO%d", gpio_num);
     return ESP_OK;
+}
+
+void button_push_dispatch(button_dispatch_fn_t fn)
+{
+    if (s_dispatch_top < DISPATCH_STACK_MAX) {
+        s_dispatch_stack[s_dispatch_top++] = fn;
+    } else {
+        ESP_LOGW(TAG, "Dispatch stack full, ignoring push");
+    }
+}
+
+void button_pop_dispatch(void)
+{
+    if (s_dispatch_top > 0) {
+        s_dispatch_top--;
+    } else {
+        ESP_LOGW(TAG, "Dispatch stack empty, ignoring pop");
+    }
 }

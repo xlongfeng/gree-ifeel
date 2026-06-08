@@ -5,6 +5,7 @@
  */
 
 #include "ifeel.h"
+#include "button.h"
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
@@ -25,6 +26,11 @@
 #define LIMIT_STRIDE        0.2f
 #define LIMIT_AUTO_HIDE_US  8000000ULL /* 8 s */
 
+/* Button GPIO numbers — read once at init */
+#define F1_GPIO CONFIG_IFEEL_F1_BUTTON_GPIO
+#define F2_GPIO CONFIG_IFEEL_F2_BUTTON_GPIO
+#define F3_GPIO CONFIG_IFEEL_F3_BUTTON_GPIO
+
 static const char *TAG = "ifeel";
 
 static ifeel_state_t s_state = IFEEL_OFF;
@@ -33,7 +39,6 @@ static bool s_light = false;
 static int64_t s_last_monitor_us = 0;
 
 static int s_limit_index = LIMIT_INDEX_DEFAULT;
-static bool s_limit_visible = false;
 static esp_timer_handle_t s_limit_timer = NULL;
 
 static float limit_low(void) { return LIMIT_LOW_BASE + s_limit_index * LIMIT_STRIDE; }
@@ -50,32 +55,9 @@ static void limit_update_ui(void)
     ui_set_lt(lt);
 }
 
-static void limit_timer_cb(void *arg)
-{
-    ui_show_limit(false);
-    s_limit_visible = false;
-    ESP_LOGI(TAG, "Limit window auto-hidden");
-}
+static void limit_timer_cb(void *arg);  /* forward declaration */
 
-static void limit_show(void)
-{
-    limit_update_ui();
-    ui_show_limit(true);
-    s_limit_visible = true;
-    esp_timer_stop(s_limit_timer);
-    esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
-    ESP_LOGI(TAG, "Limit window shown (LOW=%.1f HIGH=%.1f)", limit_low(), limit_high());
-}
-
-static void limit_hide(void)
-{
-    esp_timer_stop(s_limit_timer);
-    ui_show_limit(false);
-    s_limit_visible = false;
-    ESP_LOGI(TAG, "Limit window hidden");
-}
-
-/* ── Helpers ──────────────────────────────────────────────────────────────── */
+/* ── AC helpers ───────────────────────────────────────────────────────────── */
 
 static void ac_turn_on(void)
 {
@@ -103,6 +85,37 @@ static void ac_turn_off(void)
     gree_ir_send(&ac);
 }
 
+/* ── Per-window button handlers ───────────────────────────────────────────── */
+
+static void handler_main(button_event_t ev);
+static void handler_monitor(button_event_t ev);
+static void handler_limit(button_event_t ev);
+
+static void limit_show(void)
+{
+    limit_update_ui();
+    ui_show_limit(true);
+    esp_timer_stop(s_limit_timer);
+    esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
+    button_push_dispatch(handler_limit);
+    ESP_LOGI(TAG, "Limit window shown (LOW=%.1f HIGH=%.1f)", limit_low(), limit_high());
+}
+
+static void limit_hide(void)
+{
+    esp_timer_stop(s_limit_timer);
+    ui_show_limit(false);
+    button_pop_dispatch();
+    ESP_LOGI(TAG, "Limit window hidden");
+}
+
+static void limit_timer_cb(void *arg)
+{
+    ui_show_limit(false);
+    button_pop_dispatch();
+    ESP_LOGI(TAG, "Limit window auto-hidden");
+}
+
 static void enter_on(void)
 {
     s_state = IFEEL_ON;
@@ -114,6 +127,7 @@ static void enter_on(void)
     snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
     ui_set_st(buf);
     ui_show_monitor(true);
+    button_push_dispatch(handler_monitor);
     ESP_LOGI(TAG, "State → ON");
 }
 
@@ -123,7 +137,73 @@ static void enter_off(void)
     ac_turn_off();
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
     ui_show_monitor(false);
+    button_pop_dispatch();
     ESP_LOGI(TAG, "State → OFF");
+}
+
+/* Main window handler (OFF state) */
+static void handler_main(button_event_t ev)
+{
+    if (ev.gpio_num == F1_GPIO && !ev.long_press) {
+        enter_on();
+    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+        limit_show();
+    } else if (ev.gpio_num == F3_GPIO && !ev.long_press) {
+        s_light = !s_light;
+        ESP_LOGI(TAG, "F3: light → %d", s_light);
+        gree_ac_state_t ac = {
+            .power = false,
+            .mode = GREE_MODE_COOL,
+            .temperature = s_setpoint,
+            .fan = GREE_FAN_AUTO,
+            .light = s_light,
+        };
+        gree_ir_send(&ac);
+    }
+}
+
+/* Monitor window handler (ON state) */
+static void handler_monitor(button_event_t ev)
+{
+    if (ev.gpio_num == F1_GPIO && !ev.long_press) {
+        enter_off();
+    } else if (ev.gpio_num == F2_GPIO && !ev.long_press) {
+        s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
+        ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
+        ui_set_st(buf);
+        ac_turn_on();
+    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+        limit_show();
+    } else if (ev.gpio_num == F3_GPIO && !ev.long_press) {
+        s_light = !s_light;
+        ESP_LOGI(TAG, "F3: light → %d", s_light);
+        gree_ac_state_t ac = {
+            .power = true,
+            .mode = GREE_MODE_COOL,
+            .temperature = s_setpoint,
+            .fan = GREE_FAN_AUTO,
+            .light = s_light,
+        };
+        gree_ir_send(&ac);
+    }
+}
+
+/* Limit config window handler */
+static void handler_limit(button_event_t ev)
+{
+    if (ev.gpio_num == F2_GPIO && !ev.long_press) {
+        s_limit_index = (s_limit_index + 1) % LIMIT_STEPS;
+        limit_update_ui();
+        esp_timer_stop(s_limit_timer);
+        esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
+        ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f",
+                 s_limit_index, limit_low(), limit_high());
+    } else if (ev.gpio_num == F2_GPIO && ev.long_press) {
+        limit_hide();
+    }
+    /* All other buttons ignored in limit window */
 }
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
@@ -140,22 +220,9 @@ esp_err_t ifeel_init(void)
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_limit_timer), TAG, "limit timer create failed");
 
+    button_push_dispatch(handler_main);
     ESP_LOGI(TAG, "State → OFF (AC untouched)");
     return ESP_OK;
-}
-
-void ifeel_button_pressed(void)
-{
-    if (s_limit_visible)
-        return;
-    switch (s_state) {
-    case IFEEL_OFF:
-        enter_on();
-        break;
-    case IFEEL_ON:
-        enter_off();
-        break;
-    }
 }
 
 void ifeel_on_temperature(float temperature)
@@ -200,58 +267,6 @@ void ifeel_on_temperature(float temperature)
     } else {
         ESP_LOGI(TAG, "No adjustment (room=%.1f°C setpoint=%d°C)", temperature, s_setpoint);
     }
-}
-
-void ifeel_temperature_pressed(void)
-{
-    if (s_limit_visible) {
-        s_limit_index = (s_limit_index + 1) % LIMIT_STEPS;
-        limit_update_ui();
-        esp_timer_stop(s_limit_timer);
-        esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
-        ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f",
-                 s_limit_index, limit_low(), limit_high());
-        return;
-    }
-    if (s_state != IFEEL_ON) {
-        return;
-    }
-    s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
-    ESP_LOGI(TAG, "Temperature button: setpoint → %d°C", s_setpoint);
-    char buf[16];
-    snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
-    ui_set_st(buf);
-    ac_turn_on();
-}
-
-void ifeel_temperature_long_pressed(void)
-{
-    if (s_limit_visible) {
-        limit_hide();
-    } else {
-        limit_show();
-    }
-}
-
-void ifeel_light_pressed(void)
-{
-    if (s_limit_visible)
-        return;
-    s_light = !s_light;
-    ESP_LOGI(TAG, "Light button: light → %d", s_light);
-    gree_ac_state_t ac = {
-        .power = (s_state == IFEEL_ON),
-        .mode = GREE_MODE_COOL,
-        .temperature = s_setpoint,
-        .fan = GREE_FAN_AUTO,
-        .light = s_light,
-    };
-    gree_ir_send(&ac);
-}
-
-void ifeel_light_long_pressed(void)
-{
-    /* no-op: light long press is ignored in all states */
 }
 
 ifeel_state_t ifeel_get_state(void) { return s_state; }
