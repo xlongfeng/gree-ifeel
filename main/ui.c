@@ -7,7 +7,6 @@
 #include "ui.h"
 
 #include <stdio.h>
-#include <sys/lock.h>
 #include <sys/param.h>
 #include <unistd.h>
 
@@ -18,6 +17,7 @@
 #include "esp_log.h"
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "freertos/task.h"
 #include "lvgl.h"
 
@@ -44,7 +44,7 @@ static const char *TAG = "ui";
 #define SSD1306_LVGL_TASK_MIN_DELAY_MS 1000 / CONFIG_FREERTOS_HZ
 
 static uint8_t oled_buffer[SSD1306_LCD_H_RES * SSD1306_LCD_V_RES / 8];
-static _lock_t lvgl_api_lock;
+static SemaphoreHandle_t s_lvgl_mutex;
 
 #define UI_BAR_H 8
 
@@ -109,9 +109,9 @@ static void lvgl_port_task(void *arg)
     ESP_LOGI(TAG, "Starting LVGL task");
     uint32_t time_till_next_ms = 0;
     while (1) {
-        _lock_acquire(&lvgl_api_lock);
+        xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
         time_till_next_ms = lv_timer_handler();
-        _lock_release(&lvgl_api_lock);
+        xSemaphoreGiveRecursive(s_lvgl_mutex);
         time_till_next_ms = MAX(time_till_next_ms, SSD1306_LVGL_TASK_MIN_DELAY_MS);
         time_till_next_ms = MIN(time_till_next_ms, SSD1306_LVGL_TASK_MAX_DELAY_MS);
         usleep(1000 * time_till_next_ms);
@@ -252,6 +252,8 @@ esp_err_t ui_init(void)
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     ESP_LOGI(TAG, "Initialize LVGL");
+    s_lvgl_mutex = xSemaphoreCreateRecursiveMutex();
+    assert(s_lvgl_mutex);
     lv_init();
     lv_display_t *display = lv_display_create(SSD1306_LCD_H_RES, SSD1306_LCD_V_RES);
     lv_display_set_user_data(display, panel_handle);
@@ -280,9 +282,9 @@ esp_err_t ui_init(void)
 
     xTaskCreate(lvgl_port_task, "LVGL", SSD1306_LVGL_TASK_STACK_SIZE, NULL, SSD1306_LVGL_TASK_PRIORITY, NULL);
 
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lvgl_create_ui(display);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 
     return ESP_OK;
 }
@@ -291,95 +293,98 @@ void ui_show_limit(bool show)
 {
     if (!s_limit_win)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     if (show) {
         lv_obj_move_foreground(s_limit_win);
     } else {
         lv_obj_move_background(s_limit_win);
     }
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_ht(const char *text)
 {
     if (!s_ht_label)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_label_set_text(s_ht_label, text);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_lt(const char *text)
 {
     if (!s_lt_label)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_label_set_text(s_lt_label, text);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_show_monitor(bool show)
 {
     if (!s_monitor_win)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     if (show) {
         lv_obj_move_foreground(s_monitor_win);
     } else {
         lv_obj_move_background(s_monitor_win);
     }
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_st(const char *text)
 {
     if (!s_monitor_st_label)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_label_set_text(s_monitor_st_label, text);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_rt(const char *text)
 {
     if (!s_main_rt_label || !s_monitor_rt_label)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_label_set_text(s_main_rt_label, text);
     lv_label_set_text(s_monitor_rt_label, text);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_bar(int value, int min, int max)
 {
     if (!s_bar)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_bar_set_range(s_bar, min, max);
     lv_bar_set_value(s_bar, value, LV_ANIM_OFF);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_show_msg(bool show)
 {
     if (!s_msg_win)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     if (show) {
         lv_obj_move_foreground(s_msg_win);
     } else {
         lv_obj_move_background(s_msg_win);
     }
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
 void ui_set_msg(const char *text)
 {
     if (!s_msg_label)
         return;
-    _lock_acquire(&lvgl_api_lock);
+    xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY);
     lv_label_set_text(s_msg_label, text);
     lv_obj_align(s_msg_label, LV_ALIGN_CENTER, 0, 0);
-    _lock_release(&lvgl_api_lock);
+    xSemaphoreGiveRecursive(s_lvgl_mutex);
 }
 
+void ui_lock(void) { xSemaphoreTakeRecursive(s_lvgl_mutex, portMAX_DELAY); }
+
+void ui_unlock(void) { xSemaphoreGiveRecursive(s_lvgl_mutex); }

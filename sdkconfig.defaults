@@ -1,5 +1,6 @@
 # This file was generated using idf.py save-defconfig. It can be edited manually.
 # Espressif IoT Development Framework (ESP-IDF) Project Minimal Configuration
+# Target: esp32c3 — after a clean build run: idf.py set-target esp32c3
 #
 CONFIG_LV_CONF_SKIP=y
 CONFIG_LV_USE_OBSERVER=y
@@ -14,6 +15,6 @@ CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
 # Thermostatic GPIO pins
 CONFIG_IFEEL_DS18B20_GPIO=7
 CONFIG_IFEEL_IR_GPIO=0
-CONFIG_IFEEL_F1_BUTTON_GPIO=3
-CONFIG_IFEEL_F2_BUTTON_GPIO=4
-CONFIG_IFEEL_F3_BUTTON_GPIO=10
+CONFIG_IFEEL_BUTTON_0_GPIO=3
+CONFIG_IFEEL_BUTTON_1_GPIO=4
+CONFIG_IFEEL_BUTTON_2_GPIO=10

@@ -5,95 +5,115 @@
  */
 
 #include "button.h"
-#include "assert.h"
+
 #include "driver/gpio.h"
 #include "esp_check.h"
 #include "esp_log.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/queue.h"
-#include "freertos/task.h"
+#include "esp_timer.h"
+#include "lvgl.h"
+#include "ui.h"
 
 #define BUTTON_MAX 4
 #define BUTTON_DEBOUNCE_MS 50
-#define BUTTON_LONG_PRESS_MS 1000
+#define BUTTON_HOLD_MS 1000
+#define BUTTON_READ_PERIOD_MS 20
 
 static const char *TAG = "button";
 
-static int s_gpios[BUTTON_MAX];
-static int s_button_count = 0;
-static QueueHandle_t s_evt_queue;
-#define DISPATCH_STACK_MAX 4
+typedef struct {
+    int gpio;
+    uint32_t key;
+    uint32_t hold;
+    int64_t press_time_us; /* esp_timer_get_time() when first pressed; 0 = not pressed */
+    bool hold_fired;
+} btn_entry_t;
 
-static button_dispatch_fn_t s_dispatch_stack[DISPATCH_STACK_MAX];
-static int s_dispatch_top = 0;
+static btn_entry_t s_btns[BUTTON_MAX];
+static int s_btn_count = 0;
+static lv_indev_t *s_indev = NULL;
 
-static void IRAM_ATTR gpio_isr_handler(void *arg)
+/* Pending key event queue: each entry holds a {key, state} pair */
+#define PENDING_SIZE 8
+typedef struct {
+    uint32_t key;
+    lv_indev_state_t state;
+} pending_entry_t;
+
+static pending_entry_t s_pending[PENDING_SIZE];
+static int s_pending_head = 0;
+static int s_pending_tail = 0;
+
+static bool pending_empty(void) { return s_pending_head == s_pending_tail; }
+
+static void pending_push(uint32_t key, lv_indev_state_t state)
 {
-    uint32_t gpio_num = (uint32_t)arg;
-    xQueueSendFromISR(s_evt_queue, &gpio_num, NULL);
+    int next = (s_pending_tail + 1) % PENDING_SIZE;
+    if (next != s_pending_head) {
+        s_pending[s_pending_tail].key = key;
+        s_pending[s_pending_tail].state = state;
+        s_pending_tail = next;
+    }
 }
 
-static void button_task(void *arg)
+static void read_cb(lv_indev_t *indev, lv_indev_data_t *data)
 {
-    uint32_t gpio_num;
-    while (1) {
-        if (xQueueReceive(s_evt_queue, &gpio_num, portMAX_DELAY)) {
-            /* Debounce: wait, then confirm pin is still low */
-            vTaskDelay(pdMS_TO_TICKS(BUTTON_DEBOUNCE_MS));
-            if (gpio_get_level(gpio_num) == 0) {
-                bool long_fired = false;
-                int held_ms = 0;
+    /* Drain the pending queue one entry per call */
+    if (!pending_empty()) {
+        data->key = s_pending[s_pending_head].key;
+        data->state = s_pending[s_pending_head].state;
+        s_pending_head = (s_pending_head + 1) % PENDING_SIZE;
+        data->continue_reading = !pending_empty();
+        return;
+    }
 
-                /* Poll until release, firing long press at threshold */
-                while (gpio_get_level(gpio_num) == 0) {
-                    vTaskDelay(pdMS_TO_TICKS(10));
-                    held_ms += 10;
-                    if (!long_fired && held_ms >= BUTTON_LONG_PRESS_MS) {
-                        long_fired = true;
-                        ESP_LOGI(TAG, "Long press on GPIO%lu", gpio_num);
-                        if (s_dispatch_top > 0) {
-                            button_event_t ev = {.gpio_num = (int)gpio_num, .long_press = true};
-                            s_dispatch_stack[s_dispatch_top - 1](ev);
-                        }
-                        break;
-                    }
-                }
+    data->state = LV_INDEV_STATE_RELEASED;
+    data->key = 0;
 
-                if (!long_fired) {
-                    ESP_LOGI(TAG, "Short press on GPIO%lu", gpio_num);
-                    if (s_dispatch_top > 0) {
-                        button_event_t ev = {.gpio_num = (int)gpio_num, .long_press = false};
-                        s_dispatch_stack[s_dispatch_top - 1](ev);
-                    }
-                } else {
-                    /* Wait for physical release before re-arming */
-                    while (gpio_get_level(gpio_num) == 0) {
-                        vTaskDelay(pdMS_TO_TICKS(10));
-                    }
+    int64_t now = esp_timer_get_time();
+
+    for (int i = 0; i < s_btn_count; i++) {
+        bool pressed = (gpio_get_level(s_btns[i].gpio) == 0);
+
+        if (pressed) {
+            if (s_btns[i].press_time_us == 0) {
+                s_btns[i].press_time_us = now;
+                s_btns[i].hold_fired = false;
+            } else if (!s_btns[i].hold_fired) {
+                int64_t elapsed_ms = (now - s_btns[i].press_time_us) / 1000LL;
+                if (elapsed_ms >= BUTTON_HOLD_MS) {
+                    s_btns[i].hold_fired = true;
+                    ESP_LOGI(TAG, "Hold on GPIO%d", s_btns[i].gpio);
+                    pending_push(s_btns[i].hold, LV_INDEV_STATE_PRESSED);
+                    return;
                 }
             }
-
-            /* Drain accumulated events for this GPIO */
-            uint32_t discard;
-            while (xQueuePeek(s_evt_queue, &discard, 0) == pdTRUE && discard == gpio_num) {
-                xQueueReceive(s_evt_queue, &discard, 0);
+        } else {
+            if (s_btns[i].press_time_us != 0) {
+                int64_t elapsed_ms = (now - s_btns[i].press_time_us) / 1000LL;
+                bool hold_was_fired = s_btns[i].hold_fired;
+                s_btns[i].press_time_us = 0;
+                s_btns[i].hold_fired = false;
+                if (elapsed_ms >= BUTTON_DEBOUNCE_MS) {
+                    if (!hold_was_fired) {
+                        ESP_LOGI(TAG, "Click on GPIO%d", s_btns[i].gpio);
+                        pending_push(s_btns[i].key, LV_INDEV_STATE_PRESSED);
+                        pending_push(s_btns[i].key, LV_INDEV_STATE_RELEASED);
+                    } else {
+                        ESP_LOGI(TAG, "Release on GPIO%d", s_btns[i].gpio);
+                        pending_push(s_btns[i].hold, LV_INDEV_STATE_RELEASED);
+                    }
+                    return;
+                }
             }
         }
     }
 }
 
-esp_err_t button_init(int gpio_num)
+esp_err_t button_init(int gpio_num, uint32_t key, uint32_t hold)
 {
-    if (s_button_count >= BUTTON_MAX) {
+    if (s_btn_count >= BUTTON_MAX) {
         ESP_LOGE(TAG, "Max buttons (%d) reached", BUTTON_MAX);
         return ESP_ERR_NO_MEM;
-    }
-
-    /* Create shared queue, task, and ISR service on first call */
-    if (s_button_count == 0) {
-        s_evt_queue = xQueueCreate(8, sizeof(uint32_t));
-        xTaskCreate(button_task, "button", 2048, NULL, 10, NULL);
-        ESP_RETURN_ON_ERROR(gpio_install_isr_service(0), TAG, "isr_service failed");
     }
 
     gpio_config_t io_conf = {
@@ -101,28 +121,34 @@ esp_err_t button_init(int gpio_num)
         .mode = GPIO_MODE_INPUT,
         .pull_up_en = GPIO_PULLUP_ENABLE,
         .pull_down_en = GPIO_PULLDOWN_DISABLE,
-        .intr_type = GPIO_INTR_NEGEDGE,
+        .intr_type = GPIO_INTR_DISABLE,
     };
     ESP_RETURN_ON_ERROR(gpio_config(&io_conf), TAG, "gpio_config failed");
 
-    ESP_RETURN_ON_ERROR(
-        gpio_isr_handler_add(gpio_num, gpio_isr_handler, (void *)(intptr_t)gpio_num), TAG,
-        "isr_handler_add failed");
+    s_btns[s_btn_count].gpio = gpio_num;
+    s_btns[s_btn_count].key = key;
+    s_btns[s_btn_count].hold = hold;
+    s_btns[s_btn_count].press_time_us = 0;
+    s_btns[s_btn_count].hold_fired = false;
+    s_btn_count++;
 
-    s_gpios[s_button_count++] = gpio_num;
-
-    ESP_LOGI(TAG, "Button initialized on GPIO%d", gpio_num);
+    ESP_LOGI(TAG, "Button initialized on GPIO%d (click=0x%lx hold=0x%lx)", gpio_num, (unsigned long)key,
+             (unsigned long)hold);
     return ESP_OK;
 }
 
-void button_push_dispatch(button_dispatch_fn_t fn)
+lv_indev_t *button_indev_create(void)
 {
-    assert(s_dispatch_top < DISPATCH_STACK_MAX && "Dispatch stack overflow");
-    s_dispatch_stack[s_dispatch_top++] = fn;
+    ui_lock();
+    s_indev = lv_indev_create();
+    lv_indev_set_type(s_indev, LV_INDEV_TYPE_KEYPAD);
+    lv_indev_set_read_cb(s_indev, read_cb);
+    lv_timer_t *read_timer = lv_indev_get_read_timer(s_indev);
+    lv_timer_set_period(read_timer, BUTTON_READ_PERIOD_MS);
+    ui_unlock();
+
+    ESP_LOGI(TAG, "Button indev created (%d buttons, read period %dms)", s_btn_count, BUTTON_READ_PERIOD_MS);
+    return s_indev;
 }
 
-void button_pop_dispatch(void)
-{
-    assert(s_dispatch_top > 0 && "Dispatch stack underflow");
-    s_dispatch_top--;
-}
+lv_indev_t *button_get_indev(void) { return s_indev; }

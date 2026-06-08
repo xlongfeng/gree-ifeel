@@ -9,8 +9,8 @@
 #include "esp_check.h"
 #include "esp_log.h"
 #include "esp_timer.h"
-#include "freertos/FreeRTOS.h"
 #include "gree_ir.h"
+#include "lvgl.h"
 #include "ui.h"
 
 #define IFEEL_SETPOINT_DEFAULT 27
@@ -19,18 +19,13 @@
 #define IFEEL_MONITOR_INTERVAL_S 300LL /* seconds between adjustments (5 min) */
 
 /* Temp limit config */
-#define LIMIT_STEPS         6
+#define LIMIT_STEPS 6
 #define LIMIT_INDEX_DEFAULT 3
-#define LIMIT_LOW_BASE      23.4f /* LOW  at index 0 */
-#define LIMIT_HIGH_BASE     25.0f /* HIGH at index 0 */
-#define LIMIT_STRIDE        0.2f
-#define LIMIT_AUTO_HIDE_US  8000000ULL /* 8 s */
-#define MSG_AUTO_HIDE_US    800000ULL /* 0.8 s */
-
-/* Button GPIO numbers — read once at init */
-#define F1_GPIO CONFIG_IFEEL_F1_BUTTON_GPIO
-#define F2_GPIO CONFIG_IFEEL_F2_BUTTON_GPIO
-#define F3_GPIO CONFIG_IFEEL_F3_BUTTON_GPIO
+#define LIMIT_LOW_BASE 23.4f  /* LOW  at index 0 */
+#define LIMIT_HIGH_BASE 25.0f /* HIGH at index 0 */
+#define LIMIT_STRIDE 0.2f
+#define LIMIT_AUTO_HIDE_MS 8000U /* 8 s */
+#define MSG_AUTO_HIDE_MS 800U    /* 0.8 s */
 
 static const char *TAG = "ifeel";
 
@@ -40,14 +35,51 @@ static bool s_light = false;
 static int64_t s_last_monitor_us = 0;
 
 static int s_limit_index = LIMIT_INDEX_DEFAULT;
-static bool s_limit_pushed = false;  /* true while handler_limit is on the stack */
-static bool s_monitor_pushed = false; /* true while handler_monitor is on the stack */
-static bool s_msg_pushed = false;     /* true while handler_msg is on the stack */
-static esp_timer_handle_t s_limit_timer = NULL;
-static esp_timer_handle_t s_msg_timer = NULL;
+
+/* LVGL groups — one per window state */
+static lv_group_t *s_main_group = NULL;
+static lv_group_t *s_monitor_group = NULL;
+static lv_group_t *s_limit_group = NULL;
+static lv_group_t *s_msg_group = NULL;
+
+/* Invisible controller objects — focused members of each group */
+static lv_obj_t *s_main_ctrl = NULL;
+static lv_obj_t *s_monitor_ctrl = NULL;
+static lv_obj_t *s_limit_ctrl = NULL;
+static lv_obj_t *s_msg_ctrl = NULL;
+
+/* Group stack — mirrors the old dispatch stack */
+#define GROUP_STACK_MAX 4
+static lv_group_t *s_group_stack[GROUP_STACK_MAX];
+static int s_group_top = 0;
+
+/* Guard flags to prevent double push/pop */
+static bool s_limit_pushed = false;
+static bool s_monitor_pushed = false;
+static bool s_msg_pushed = false;
+
+/* LVGL auto-hide timers (created once, pause/resumed as needed) */
+static lv_timer_t *s_limit_timer = NULL;
+static lv_timer_t *s_msg_timer = NULL;
 
 static float limit_low(void) { return LIMIT_LOW_BASE + s_limit_index * LIMIT_STRIDE; }
 static float limit_high(void) { return LIMIT_HIGH_BASE + s_limit_index * LIMIT_STRIDE; }
+
+/* ── Group stack helpers ──────────────────────────────────────────────────── */
+
+static void group_push(lv_group_t *g)
+{
+    assert(s_group_top < GROUP_STACK_MAX && "Group stack overflow");
+    s_group_stack[s_group_top++] = g;
+    lv_indev_set_group(button_get_indev(), g);
+}
+
+static void group_pop(void)
+{
+    assert(s_group_top > 0 && "Group stack underflow");
+    s_group_top--;
+    lv_indev_set_group(button_get_indev(), s_group_top > 0 ? s_group_stack[s_group_top - 1] : NULL);
+}
 
 /* ── Limit window helpers ─────────────────────────────────────────────────── */
 
@@ -88,92 +120,96 @@ static void ac_turn_off(void)
     gree_ir_send(&ac);
 }
 
-/* ── Per-window button handlers ───────────────────────────────────────────── */
+/* ── Forward declarations ─────────────────────────────────────────────────── */
 
-static void handler_main(button_event_t ev);
-static void handler_monitor(button_event_t ev);
-static void handler_limit(button_event_t ev);
-static void handler_msg(button_event_t ev);
-
-static void limit_show(void)
-{
-    if (s_limit_pushed)
-        return;
-    s_limit_pushed = true;
-    limit_update_ui();
-    ui_show_limit(true);
-    esp_timer_stop(s_limit_timer);
-    esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
-    button_push_dispatch(handler_limit);
-    ESP_LOGI(TAG, "Limit window shown (LOW=%.1f HIGH=%.1f)", limit_low(), limit_high());
-}
-
-static void limit_hide(void)
-{
-    if (!s_limit_pushed)
-        return;
-    s_limit_pushed = false;
-    esp_timer_stop(s_limit_timer);
-    ui_show_limit(false);
-    button_pop_dispatch();
-    ESP_LOGI(TAG, "Limit window hidden");
-}
-
-static void limit_timer_cb(void *arg)
-{
-    limit_hide();
-    ESP_LOGI(TAG, "Limit window auto-hidden");
-}
-
-/* ── Message dialog helpers ───────────────────────────────────────────────── */
-
+static void limit_show(void);
+static void limit_hide(void);
+static void msg_show(const char *text);
 static void msg_hide(void);
 
-static void msg_timer_cb(void *arg)
-{
-    msg_hide();
-}
+/* ── Event callbacks ──────────────────────────────────────────────────────── */
 
-static void msg_show(const char *text)
+static void enter_on(void);
+static void enter_off(void);
+
+static void cb_main(lv_event_t *e)
 {
-    ui_set_msg(text);
-    esp_timer_stop(s_msg_timer);
-    esp_timer_start_once(s_msg_timer, MSG_AUTO_HIDE_US);
-    if (!s_msg_pushed) {
-        s_msg_pushed = true;
-        ui_show_msg(true);
-        button_push_dispatch(handler_msg);
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_BUTTON_0) {
+        enter_on();
+        msg_show("Power ON");
+    } else if (key == LV_KEY_ALT_BUTTON_1) {
+        limit_show();
+    } else if (key == LV_KEY_BUTTON_2) {
+        /* toggle light */
+        s_light = !s_light;
+        gree_ac_state_t ac = {
+            .power = false,
+            .mode = GREE_MODE_COOL,
+            .temperature = s_setpoint,
+            .fan = GREE_FAN_AUTO,
+            .light = s_light,
+        };
+        gree_ir_send(&ac);
+        char text[16];
+        snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
+        msg_show(text);
+        ESP_LOGI(TAG, "F3: light → %d", s_light);
     }
-    ESP_LOGI(TAG, "Msg: %s", text);
 }
 
-static void msg_hide(void)
+static void cb_monitor(lv_event_t *e)
 {
-    if (!s_msg_pushed)
-        return;
-    s_msg_pushed = false;
-    esp_timer_stop(s_msg_timer);
-    ui_show_msg(false);
-    button_pop_dispatch();
-    ESP_LOGI(TAG, "Msg hidden");
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_BUTTON_0) {
+        enter_off();
+        msg_show("Power OFF");
+    } else if (key == LV_KEY_BUTTON_1) {
+        s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
+        ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
+        char buf[16];
+        snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
+        ui_set_st(buf);
+        ac_turn_on();
+    } else if (key == LV_KEY_ALT_BUTTON_1) {
+        limit_show();
+    } else if (key == LV_KEY_BUTTON_2) {
+        s_light = !s_light;
+        gree_ac_state_t ac = {
+            .power = true,
+            .mode = GREE_MODE_COOL,
+            .temperature = s_setpoint,
+            .fan = GREE_FAN_AUTO,
+            .light = s_light,
+        };
+        gree_ir_send(&ac);
+        char text[16];
+        snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
+        msg_show(text);
+        ESP_LOGI(TAG, "F3: light → %d", s_light);
+    }
 }
 
-static void toggle_light_and_msg(void)
+static void limit_restart_timer(void);
+
+static void cb_limit(lv_event_t *e)
 {
-    s_light = !s_light;
-    gree_ac_state_t ac = {
-        .power = (s_state == IFEEL_ON),
-        .mode = GREE_MODE_COOL,
-        .temperature = s_setpoint,
-        .fan = GREE_FAN_AUTO,
-        .light = s_light,
-    };
-    gree_ir_send(&ac);
-    char text[16];
-    snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
-    msg_show(text);
-    ESP_LOGI(TAG, "F3: light → %d", s_light);
+    uint32_t key = lv_event_get_key(e);
+    if (key == LV_KEY_BUTTON_1) {
+        s_limit_index = (s_limit_index + 1) % LIMIT_STEPS;
+        limit_update_ui();
+        limit_restart_timer();
+        ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f", s_limit_index, limit_low(), limit_high());
+    } else if (key == LV_KEY_ALT_BUTTON_1) {
+        limit_hide();
+    }
+    /* All other buttons ignored in limit window */
 }
+
+/* Message dialog handler — all keys ignored */
+static void cb_msg(lv_event_t *e) { (void)e; }
+
+/* ── Window transitions ───────────────────────────────────────────────────── */
 
 static void enter_on(void)
 {
@@ -189,7 +225,7 @@ static void enter_on(void)
     snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
     ui_set_st(buf);
     ui_show_monitor(true);
-    button_push_dispatch(handler_monitor);
+    group_push(s_monitor_group);
     ESP_LOGI(TAG, "State → ON");
 }
 
@@ -202,66 +238,100 @@ static void enter_off(void)
     ac_turn_off();
     ui_set_bar(0, 0, IFEEL_MONITOR_INTERVAL_S);
     ui_show_monitor(false);
-    button_pop_dispatch();
+    group_pop();
     ESP_LOGI(TAG, "State → OFF");
 }
 
-/* Main window handler (OFF state) */
-static void handler_main(button_event_t ev)
+/* ── Limit window ─────────────────────────────────────────────────────────── */
+
+static void limit_timer_cb(lv_timer_t *timer);
+
+static void limit_restart_timer(void)
 {
-    if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
-        enter_on();
-        msg_show("Power ON");
-    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
-        limit_show();
-    } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
-        toggle_light_and_msg();
-    }
+    lv_timer_set_repeat_count(s_limit_timer, 1);
+    lv_timer_reset(s_limit_timer);
+    lv_timer_resume(s_limit_timer);
 }
 
-/* Monitor window handler (ON state) */
-static void handler_monitor(button_event_t ev)
+static void limit_show(void)
 {
-    if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
-        enter_off();
-        msg_show("Power OFF");
-    } else if (is_button(ev, F2_GPIO) && is_short_pressed(ev)) {
-        s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
-        ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
-        char buf[16];
-        snprintf(buf, sizeof(buf), "ST: %d.0\xC2\xB0\x43", s_setpoint);
-        ui_set_st(buf);
-        ac_turn_on();
-    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
-        limit_show();
-    } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
-        toggle_light_and_msg();
-    }
+    if (s_limit_pushed)
+        return;
+    s_limit_pushed = true;
+    limit_update_ui();
+    ui_show_limit(true);
+    limit_restart_timer();
+    group_push(s_limit_group);
+    ESP_LOGI(TAG, "Limit window shown (LOW=%.1f HIGH=%.1f)", limit_low(), limit_high());
 }
 
-/* Limit config window handler */
-static void handler_limit(button_event_t ev)
+static void limit_hide(void)
 {
-    if (is_button(ev, F2_GPIO) && is_short_pressed(ev)) {
-        s_limit_index = (s_limit_index + 1) % LIMIT_STEPS;
-        limit_update_ui();
-        esp_timer_stop(s_limit_timer);
-        esp_timer_start_once(s_limit_timer, LIMIT_AUTO_HIDE_US);
-        ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f",
-                 s_limit_index, limit_low(), limit_high());
-    } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
-        limit_hide();
-    }
-    /* All other buttons ignored in limit window */
+    if (!s_limit_pushed)
+        return;
+    s_limit_pushed = false;
+    lv_timer_pause(s_limit_timer);
+    ui_show_limit(false);
+    group_pop();
+    ESP_LOGI(TAG, "Limit window hidden");
 }
 
-/* Message dialog handler */
-static void handler_msg(button_event_t ev)
+static void limit_timer_cb(lv_timer_t *timer)
 {
-    (void)ev; /* All buttons ignored while message is shown */
+    (void)timer;
+    /* s_limit_timer is auto-paused after repeat_count reaches 0 */
+    limit_hide();
+    ESP_LOGI(TAG, "Limit window auto-hidden");
+}
+
+/* ── Message dialog ───────────────────────────────────────────────────────── */
+
+static void msg_timer_cb(lv_timer_t *timer);
+
+static void msg_show(const char *text)
+{
+    ui_set_msg(text);
+    lv_timer_set_repeat_count(s_msg_timer, 1);
+    lv_timer_reset(s_msg_timer);
+    lv_timer_resume(s_msg_timer);
+    if (!s_msg_pushed) {
+        s_msg_pushed = true;
+        ui_show_msg(true);
+        group_push(s_msg_group);
+    }
+    ESP_LOGI(TAG, "Msg: %s", text);
+}
+
+static void msg_hide(void)
+{
+    if (!s_msg_pushed)
+        return;
+    s_msg_pushed = false;
+    lv_timer_pause(s_msg_timer);
+    ui_show_msg(false);
+    group_pop();
+    ESP_LOGI(TAG, "Msg hidden");
+}
+
+static void msg_timer_cb(lv_timer_t *timer)
+{
+    (void)timer;
+    msg_hide();
 }
 
 /* ── Public API ───────────────────────────────────────────────────────────── */
+
+static lv_obj_t *make_ctrl(lv_group_t *group, lv_event_cb_t cb)
+{
+    lv_obj_t *obj = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(obj, 0, 0);
+    lv_obj_set_pos(obj, 0, 0);
+    lv_obj_add_flag(obj, LV_OBJ_FLAG_HIDDEN);
+    lv_group_add_obj(group, obj);
+    lv_group_focus_obj(obj);
+    lv_obj_add_event_cb(obj, cb, LV_EVENT_KEY, NULL);
+    return obj;
+}
 
 esp_err_t ifeel_init(void)
 {
@@ -269,19 +339,33 @@ esp_err_t ifeel_init(void)
     s_setpoint = IFEEL_SETPOINT_DEFAULT;
     s_last_monitor_us = 0;
 
-    esp_timer_create_args_t timer_args = {
-        .callback = limit_timer_cb,
-        .name = "limit_auto_hide",
-    };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_limit_timer), TAG, "limit timer create failed");
+    ui_lock();
 
-    esp_timer_create_args_t msg_timer_args = {
-        .callback = msg_timer_cb,
-        .name = "msg_auto_hide",
-    };
-    ESP_RETURN_ON_ERROR(esp_timer_create(&msg_timer_args, &s_msg_timer), TAG, "msg timer create failed");
+    /* Create one group + invisible controller per window state */
+    s_main_group = lv_group_create();
+    s_monitor_group = lv_group_create();
+    s_limit_group = lv_group_create();
+    s_msg_group = lv_group_create();
 
-    button_push_dispatch(handler_main);
+    s_main_ctrl = make_ctrl(s_main_group, cb_main);
+    s_monitor_ctrl = make_ctrl(s_monitor_group, cb_monitor);
+    s_limit_ctrl = make_ctrl(s_limit_group, cb_limit);
+    s_msg_ctrl = make_ctrl(s_msg_group, cb_msg);
+
+    /* Create auto-hide timers (paused, auto_delete=false so we can reuse them) */
+    s_limit_timer = lv_timer_create(limit_timer_cb, LIMIT_AUTO_HIDE_MS, NULL);
+    lv_timer_set_auto_delete(s_limit_timer, false);
+    lv_timer_pause(s_limit_timer);
+
+    s_msg_timer = lv_timer_create(msg_timer_cb, MSG_AUTO_HIDE_MS, NULL);
+    lv_timer_set_auto_delete(s_msg_timer, false);
+    lv_timer_pause(s_msg_timer);
+
+    /* Activate main (OFF) group */
+    group_push(s_main_group);
+
+    ui_unlock();
+
     ESP_LOGI(TAG, "State → OFF (AC untouched)");
     return ESP_OK;
 }
@@ -329,7 +413,3 @@ void ifeel_on_temperature(float temperature)
         ESP_LOGI(TAG, "No adjustment (room=%.1f°C setpoint=%d°C)", temperature, s_setpoint);
     }
 }
-
-ifeel_state_t ifeel_get_state(void) { return s_state; }
-
-uint8_t ifeel_get_setpoint(void) { return s_setpoint; }

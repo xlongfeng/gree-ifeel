@@ -34,16 +34,6 @@ esp_err_t ifeel_init(void);
  */
 void ifeel_on_temperature(float temperature);
 
-/**
- * @brief Return the current iFeel state.
- */
-ifeel_state_t ifeel_get_state(void);
-
-/**
- * @brief Return the current AC setpoint (°C). Valid in ON state.
- */
-uint8_t ifeel_get_setpoint(void);
-
 #ifdef __cplusplus
 }
 #endif

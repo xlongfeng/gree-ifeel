@@ -65,6 +65,19 @@ void ui_show_msg(bool show);
  */
 void ui_set_msg(const char *text);
 
+/**
+ * @brief Acquire the LVGL API lock (recursive mutex).
+ *
+ * Must be called before any LVGL API call made from a non-LVGL task.
+ * Safe to call from within the LVGL task (recursive).
+ */
+void ui_lock(void);
+
+/**
+ * @brief Release the LVGL API lock.
+ */
+void ui_unlock(void);
+
 #ifdef __cplusplus
 }
 #endif

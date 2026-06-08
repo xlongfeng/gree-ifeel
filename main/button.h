@@ -7,81 +7,51 @@
 #pragma once
 
 #include "esp_err.h"
-#include <stdbool.h>
+#include "lvgl.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /**
- * @brief A button event describing which GPIO fired and the press type.
- */
-typedef struct {
-    int gpio_num;   /**< GPIO number of the button */
-    bool long_press; /**< true = long press, false = short press */
-} button_event_t;
-
-/**
- * @brief Dispatch function type called for every button event.
- */
-typedef void (*button_dispatch_fn_t)(button_event_t event);
-
-/**
- * @brief Initialize a GPIO button.
+ * @brief Application-defined key codes delivered via LV_EVENT_KEY.
  *
- * The GPIO is configured as input with internal pull-up. A falling-edge
- * interrupt feeds a FreeRTOS queue; a background task debounces presses
- * and classifies them:
- *   - Short press: released before BUTTON_LONG_PRESS_MS (1000 ms)
- *   - Long press: held for BUTTON_LONG_PRESS_MS — fires immediately at threshold
- *
- * Events are delivered via the dispatch function set with button_set_dispatch().
- *
- * @param gpio_num  GPIO number
+ * These are chosen outside LVGL's reserved range (0x00–0x7F) to avoid
+ * collisions with LV_KEY_ENTER (10), LV_KEY_NEXT (9), LV_KEY_PREV (11), etc.
  */
-esp_err_t button_init(int gpio_num);
+#define LV_KEY_BUTTON_0 0x1000U     /**< Button 0 click (short press) */
+#define LV_KEY_ALT_BUTTON_0 0x1001U /**< Button 0 hold  (long press)  */
+#define LV_KEY_BUTTON_1 0x1002U     /**< Button 1 click (short press) */
+#define LV_KEY_ALT_BUTTON_1 0x1003U /**< Button 1 hold  (long press)  */
+#define LV_KEY_BUTTON_2 0x1004U     /**< Button 2 click (short press) */
+#define LV_KEY_ALT_BUTTON_2 0x1005U /**< Button 2 hold  (long press)  */
 
 /**
- * @brief Push a dispatch function onto the handler stack.
+ * @brief Register a GPIO button.
  *
- * The pushed function becomes the active handler immediately.
- * Use when a new window is shown.
+ * Configures the GPIO as input with internal pull-up.
+ * Must be called before button_indev_create().
  *
- * @param fn  Dispatch function (must not be NULL)
+ * @param gpio_num  GPIO number (active LOW)
+ * @param key       Key code to fire on a click  (LV_KEY_BUTTON_x)
+ * @param hold      Key code to fire on a hold   (LV_KEY_ALT_BUTTON_x)
  */
-void button_push_dispatch(button_dispatch_fn_t fn);
+esp_err_t button_init(int gpio_num, uint32_t key, uint32_t hold);
 
 /**
- * @brief Pop the top dispatch function from the handler stack.
+ * @brief Create the LVGL keypad indev and start polling all registered buttons.
  *
- * The previous handler becomes active. Has no effect if the stack is empty.
- * Use when a window is dismissed.
+ * Must be called after lv_init() (i.e., after ui_init()) and after all
+ * button_init() calls.
+ *
+ * @return The created lv_indev_t pointer (never NULL on success).
  */
-void button_pop_dispatch(void);
+lv_indev_t *button_indev_create(void);
 
 /**
- * @brief Return true if the event is from the given GPIO button.
+ * @brief Return the indev created by button_indev_create().
  */
-static inline bool is_button(button_event_t ev, int gpio_num)
-{
-    return ev.gpio_num == gpio_num;
-}
-
-/**
- * @brief Return true if the event is a short press.
- */
-static inline bool is_short_pressed(button_event_t ev)
-{
-    return !ev.long_press;
-}
-
-/**
- * @brief Return true if the event is a long press.
- */
-static inline bool is_long_pressed(button_event_t ev)
-{
-    return ev.long_press;
-}
+lv_indev_t *button_get_indev(void);
 
 #ifdef __cplusplus
 }
