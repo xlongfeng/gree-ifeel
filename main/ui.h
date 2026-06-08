@@ -55,6 +55,16 @@ void ui_set_rt(const char *text);
  */
 void ui_set_bar(int value, int min, int max);
 
+/**
+ * @brief Show or hide the message dialog (overlays all windows).
+ */
+void ui_show_msg(bool show);
+
+/**
+ * @brief Set the message text in the dialog (center-aligned).
+ */
+void ui_set_msg(const char *text);
+
 #ifdef __cplusplus
 }
 #endif

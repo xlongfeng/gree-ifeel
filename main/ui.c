@@ -58,7 +58,9 @@ static lv_obj_t *s_monitor_st_label = NULL;
 static lv_obj_t *s_monitor_rt_label = NULL;
 static lv_obj_t *s_bar = NULL;
 
-/* Limit window widgets (brought to front for limit config) */
+/* Message dialog widgets (brought to front for transient notifications) */
+static lv_obj_t *s_msg_win = NULL;
+static lv_obj_t *s_msg_label = NULL;
 static lv_obj_t *s_limit_win = NULL;
 static lv_obj_t *s_ht_label = NULL;
 static lv_obj_t *s_lt_label = NULL;
@@ -184,6 +186,14 @@ static void lvgl_create_ui(lv_display_t *disp)
     lv_obj_set_flex_flow(s_main_win, LV_FLEX_FLOW_COLUMN);
     make_label(s_main_win, "Gree iFeel");
     s_main_rt_label = make_label(s_main_win, "RT: --.-\xC2\xB0\x43");
+    /* Message dialog — created last so it sits on top by default */
+    s_msg_win = lv_obj_create(scr);
+    win_style(s_msg_win);
+    s_msg_label = make_label(s_msg_win, "");
+    lv_obj_set_style_text_align(s_msg_label, LV_TEXT_ALIGN_CENTER, 0);
+    lv_obj_set_width(s_msg_label, SSD1306_LCD_H_RES);
+    lv_obj_align(s_msg_label, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_move_background(s_msg_win); /* start hidden */
 }
 
 /* ── Public API ──────────────────────────────────────────────────────────── */
@@ -347,6 +357,29 @@ void ui_set_bar(int value, int min, int max)
     _lock_acquire(&lvgl_api_lock);
     lv_bar_set_range(s_bar, min, max);
     lv_bar_set_value(s_bar, value, LV_ANIM_OFF);
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_show_msg(bool show)
+{
+    if (!s_msg_win)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    if (show) {
+        lv_obj_move_foreground(s_msg_win);
+    } else {
+        lv_obj_move_background(s_msg_win);
+    }
+    _lock_release(&lvgl_api_lock);
+}
+
+void ui_set_msg(const char *text)
+{
+    if (!s_msg_label)
+        return;
+    _lock_acquire(&lvgl_api_lock);
+    lv_label_set_text(s_msg_label, text);
+    lv_obj_align(s_msg_label, LV_ALIGN_CENTER, 0, 0);
     _lock_release(&lvgl_api_lock);
 }
 

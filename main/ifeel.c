@@ -25,6 +25,7 @@
 #define LIMIT_HIGH_BASE     25.0f /* HIGH at index 0 */
 #define LIMIT_STRIDE        0.2f
 #define LIMIT_AUTO_HIDE_US  8000000ULL /* 8 s */
+#define MSG_AUTO_HIDE_US    800000ULL /* 0.8 s */
 
 /* Button GPIO numbers — read once at init */
 #define F1_GPIO CONFIG_IFEEL_F1_BUTTON_GPIO
@@ -41,7 +42,9 @@ static int64_t s_last_monitor_us = 0;
 static int s_limit_index = LIMIT_INDEX_DEFAULT;
 static bool s_limit_pushed = false;  /* true while handler_limit is on the stack */
 static bool s_monitor_pushed = false; /* true while handler_monitor is on the stack */
+static bool s_msg_pushed = false;     /* true while handler_msg is on the stack */
 static esp_timer_handle_t s_limit_timer = NULL;
+static esp_timer_handle_t s_msg_timer = NULL;
 
 static float limit_low(void) { return LIMIT_LOW_BASE + s_limit_index * LIMIT_STRIDE; }
 static float limit_high(void) { return LIMIT_HIGH_BASE + s_limit_index * LIMIT_STRIDE; }
@@ -90,6 +93,7 @@ static void ac_turn_off(void)
 static void handler_main(button_event_t ev);
 static void handler_monitor(button_event_t ev);
 static void handler_limit(button_event_t ev);
+static void handler_msg(button_event_t ev);
 
 static void limit_show(void)
 {
@@ -119,6 +123,56 @@ static void limit_timer_cb(void *arg)
 {
     limit_hide();
     ESP_LOGI(TAG, "Limit window auto-hidden");
+}
+
+/* ── Message dialog helpers ───────────────────────────────────────────────── */
+
+static void msg_hide(void);
+
+static void msg_timer_cb(void *arg)
+{
+    msg_hide();
+}
+
+static void msg_show(const char *text)
+{
+    ui_set_msg(text);
+    esp_timer_stop(s_msg_timer);
+    esp_timer_start_once(s_msg_timer, MSG_AUTO_HIDE_US);
+    if (!s_msg_pushed) {
+        s_msg_pushed = true;
+        ui_show_msg(true);
+        button_push_dispatch(handler_msg);
+    }
+    ESP_LOGI(TAG, "Msg: %s", text);
+}
+
+static void msg_hide(void)
+{
+    if (!s_msg_pushed)
+        return;
+    s_msg_pushed = false;
+    esp_timer_stop(s_msg_timer);
+    ui_show_msg(false);
+    button_pop_dispatch();
+    ESP_LOGI(TAG, "Msg hidden");
+}
+
+static void toggle_light_and_msg(void)
+{
+    s_light = !s_light;
+    gree_ac_state_t ac = {
+        .power = (s_state == IFEEL_ON),
+        .mode = GREE_MODE_COOL,
+        .temperature = s_setpoint,
+        .fan = GREE_FAN_AUTO,
+        .light = s_light,
+    };
+    gree_ir_send(&ac);
+    char text[16];
+    snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
+    msg_show(text);
+    ESP_LOGI(TAG, "F3: light → %d", s_light);
 }
 
 static void enter_on(void)
@@ -160,16 +214,7 @@ static void handler_main(button_event_t ev)
     } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_show();
     } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
-        s_light = !s_light;
-        ESP_LOGI(TAG, "F3: light → %d", s_light);
-        gree_ac_state_t ac = {
-            .power = false,
-            .mode = GREE_MODE_COOL,
-            .temperature = s_setpoint,
-            .fan = GREE_FAN_AUTO,
-            .light = s_light,
-        };
-        gree_ir_send(&ac);
+        toggle_light_and_msg();
     }
 }
 
@@ -188,16 +233,7 @@ static void handler_monitor(button_event_t ev)
     } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_show();
     } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
-        s_light = !s_light;
-        ESP_LOGI(TAG, "F3: light → %d", s_light);
-        gree_ac_state_t ac = {
-            .power = true,
-            .mode = GREE_MODE_COOL,
-            .temperature = s_setpoint,
-            .fan = GREE_FAN_AUTO,
-            .light = s_light,
-        };
-        gree_ir_send(&ac);
+        toggle_light_and_msg();
     }
 }
 
@@ -217,6 +253,12 @@ static void handler_limit(button_event_t ev)
     /* All other buttons ignored in limit window */
 }
 
+/* Message dialog handler */
+static void handler_msg(button_event_t ev)
+{
+    (void)ev; /* All buttons ignored while message is shown */
+}
+
 /* ── Public API ───────────────────────────────────────────────────────────── */
 
 esp_err_t ifeel_init(void)
@@ -230,6 +272,12 @@ esp_err_t ifeel_init(void)
         .name = "limit_auto_hide",
     };
     ESP_RETURN_ON_ERROR(esp_timer_create(&timer_args, &s_limit_timer), TAG, "limit timer create failed");
+
+    esp_timer_create_args_t msg_timer_args = {
+        .callback = msg_timer_cb,
+        .name = "msg_auto_hide",
+    };
+    ESP_RETURN_ON_ERROR(esp_timer_create(&msg_timer_args, &s_msg_timer), TAG, "msg timer create failed");
 
     button_push_dispatch(handler_main);
     ESP_LOGI(TAG, "State → OFF (AC untouched)");
