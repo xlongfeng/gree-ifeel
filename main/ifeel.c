@@ -211,6 +211,7 @@ static void handler_main(button_event_t ev)
 {
     if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
         enter_on();
+        msg_show("Power ON");
     } else if (is_button(ev, F2_GPIO) && is_long_pressed(ev)) {
         limit_show();
     } else if (is_button(ev, F3_GPIO) && is_short_pressed(ev)) {
@@ -223,6 +224,7 @@ static void handler_monitor(button_event_t ev)
 {
     if (is_button(ev, F1_GPIO) && is_short_pressed(ev)) {
         enter_off();
+        msg_show("Power OFF");
     } else if (is_button(ev, F2_GPIO) && is_short_pressed(ev)) {
         s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
         ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
