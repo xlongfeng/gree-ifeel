@@ -200,10 +200,9 @@ static void cb_limit(lv_event_t *e)
         limit_update_ui();
         limit_restart_timer();
         ESP_LOGI(TAG, "Limit cycle → index=%d LOW=%.1f HIGH=%.1f", s_limit_index, limit_low(), limit_high());
-    } else if (key == LV_KEY_ALT_BUTTON_1) {
+    } else {
         limit_hide();
     }
-    /* All other buttons ignored in limit window */
 }
 
 /* Message dialog handler — all keys ignored */
