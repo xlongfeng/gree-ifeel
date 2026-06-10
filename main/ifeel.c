@@ -137,7 +137,7 @@ static void cb_main(lv_event_t *e)
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_BUTTON_0) {
         enter_on();
-        msg_show("Power ON");
+        msg_show(LV_SYMBOL_REFRESH);
     } else if (key == LV_KEY_ALT_BUTTON_1) {
         limit_show();
     } else if (key == LV_KEY_BUTTON_2) {
@@ -151,9 +151,7 @@ static void cb_main(lv_event_t *e)
             .light = s_light,
         };
         gree_ir_send(&ac);
-        char text[16];
-        snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
-        msg_show(text);
+        msg_show(s_light ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE);
         ESP_LOGI(TAG, "F3: light → %d", s_light);
     }
 }
@@ -163,7 +161,7 @@ static void cb_monitor(lv_event_t *e)
     uint32_t key = lv_event_get_key(e);
     if (key == LV_KEY_BUTTON_0) {
         enter_off();
-        msg_show("Power OFF");
+        msg_show(LV_SYMBOL_POWER);
     } else if (key == LV_KEY_BUTTON_1) {
         s_setpoint = (s_setpoint >= IFEEL_SETPOINT_MAX) ? IFEEL_SETPOINT_MIN : s_setpoint + 1;
         ESP_LOGI(TAG, "F2: setpoint → %d°C", s_setpoint);
@@ -183,9 +181,7 @@ static void cb_monitor(lv_event_t *e)
             .light = s_light,
         };
         gree_ir_send(&ac);
-        char text[16];
-        snprintf(text, sizeof(text), "Light %s", s_light ? "ON" : "OFF");
-        msg_show(text);
+        msg_show(s_light ? LV_SYMBOL_EYE_OPEN : LV_SYMBOL_EYE_CLOSE);
         ESP_LOGI(TAG, "F3: light → %d", s_light);
     }
 }

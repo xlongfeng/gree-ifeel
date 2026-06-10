@@ -190,6 +190,7 @@ static void lvgl_create_ui(lv_display_t *disp)
     s_msg_win = lv_obj_create(scr);
     win_style(s_msg_win);
     s_msg_label = make_label(s_msg_win, "");
+    lv_obj_set_style_text_font(s_msg_label, &lv_font_montserrat_24, 0);
     lv_obj_set_style_text_align(s_msg_label, LV_TEXT_ALIGN_CENTER, 0);
     lv_obj_set_width(s_msg_label, SSD1306_LCD_H_RES);
     lv_obj_align(s_msg_label, LV_ALIGN_CENTER, 0, 0);
