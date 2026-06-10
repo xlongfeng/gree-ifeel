@@ -25,7 +25,7 @@
 #define LIMIT_HIGH_BASE 25.0f /* HIGH at index 0 */
 #define LIMIT_STRIDE 0.2f
 #define LIMIT_AUTO_HIDE_MS 8000U /* 8 s */
-#define MSG_AUTO_HIDE_MS 800U    /* 0.8 s */
+#define MSG_AUTO_HIDE_MS 500U    /* 0.5 s */
 
 static const char *TAG = "ifeel";
 
