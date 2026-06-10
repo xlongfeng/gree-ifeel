@@ -13,7 +13,7 @@
 #include "lvgl.h"
 #include "ui.h"
 
-#define IFEEL_SETPOINT_DEFAULT 27
+#define IFEEL_SETPOINT_DEFAULT 24
 #define IFEEL_SETPOINT_MIN 24
 #define IFEEL_SETPOINT_MAX 28
 #define IFEEL_MONITOR_INTERVAL_S 300LL /* seconds between adjustments (5 min) */
